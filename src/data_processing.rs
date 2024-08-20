@@ -1,8 +1,25 @@
 use std::io::Bytes;
 
-fn packet_to_frames(udp_hex: &str) -> Vec<&str>{
+fn process_udp_to_kafka(udp_hex: &str) -> Vec<&str>{
+
+    // Split into the different frames in the packet
+
+    // Process each found frame
+        // if empty frame discount quickly - by len
+
+        // else if neutron
+
+        // else if Veto
+
+        // else if SE
+
+    let returned: Vec<&str> = Vec::new();
+    returned
+}
+
+fn packet_to_frames(udp_hex: &str) -> (Vec<&str>, Vec<u8>){
     let veto_frame_header = "fcffffff";
-    let SE_frame_header = "fdffffff";
+    let se_frame_header = "fdffffff";
     let neutron_header = "ffffffff";
 
     // Convert the packet into the words
@@ -14,36 +31,40 @@ fn packet_to_frames(udp_hex: &str) -> Vec<&str>{
 
     // Make a vector of the addresses for each frame header found
     let mut frame_index: Vec<u32> = Vec::new();
+    // Vector to hold a number representing the type of frame detected
+    let mut frame_types: Vec<u8> = Vec::new();
+
     // if a word matches the different headers then push the index to the list
     for index in 0..words.len() as u32{
         let word = words[index as usize];
-        if word == veto_frame_header { frame_index.push(index) }
-        else if word == SE_frame_header { frame_index.push(index) }
-        else if word == neutron_header { frame_index.push(index)}
+        if word == neutron_header { frame_index.push(index); frame_types.push(1) }
+        else if word == veto_frame_header { frame_index.push(index); frame_types.push(2)}
+        else if word == se_frame_header { frame_index.push(index); frame_types.push(3)}
     }
 
+    // Vector of the bytes making up each frame
+    let mut frame_bytes: Vec<&str> = Vec::new();
 
-    let mut return_vec: Vec<&str> = Vec::new();
-    if frame_index.len() == 0 {return_vec}  // If no frames found return the empty Vec
-    else if frame_index.len() == 1 {        // If one frame found append entire UDP packet
-        return_vec.push(udp_hex);
-        return_vec
+    // If no frames found return the empty Vec
+    if frame_index.len() == 0 {(frame_bytes, frame_types)}
+    // If one frame found append entire UDP packet
+    else if frame_index.len() == 1 {
+        frame_bytes.push(udp_hex);
+        (frame_bytes, frame_types)
     }
-    else {  // multiple frames found, append each to the vec
+    // multiple frames found, append each to the vec
+    else {
         for i in 0..frame_index.len(){
             if i == frame_index.len()-1{
-                return_vec.push(&udp_hex[(frame_index[i] * 8) as usize..udp_hex.len()]);
+                frame_bytes.push(&udp_hex[(frame_index[i] * 8) as usize..udp_hex.len()]);
 
             }
             else{
-                return_vec.push(&udp_hex[(frame_index[i] * 8) as usize..(frame_index[i+1] * 8) as usize]);
+                frame_bytes.push(&udp_hex[(frame_index[i] * 8) as usize..(frame_index[i+1] * 8) as usize]);
             }
         }
-        return_vec
+        (frame_bytes, frame_types)
     }
-
-
-
 }
 
 pub fn header_decoder(bytes: Vec<u8>){
@@ -67,8 +88,6 @@ pub fn header_decoder(bytes: Vec<u8>){
     // let u8_vec = hex_to_u8_vec(hex).unwrap();
     let bin = hex_to_bool_vec(&hex).unwrap();
     println!("hex: {hex}");
-    // println!("u8_vec: {u8_vec:?}");
-    //println!("bin: {bin:?}");
     println!("bin_len: {}", bin.len());
 
     // let words = group_bytes_by_events(&hex, 2);
