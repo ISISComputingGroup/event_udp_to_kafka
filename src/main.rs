@@ -160,15 +160,13 @@ async fn kafka_udp_process(cmd_args: Args) -> Result<(), Box<Error>>{
         for record in records {
             if let Some(value) = record.value {
                 let raw_udpjson: rawUdpJSON = serde_json::from_slice(&value).unwrap();
-                println!("Got MSG To PROC - SRC IP ADR: {}", raw_udpjson.src);
+               // println!("Got MSG To PROC - SRC IP ADR: {}", raw_udpjson.src);
                 let kafka_fb = process_udp_to_kafka(&raw_udpjson.packet_data);
 
             }
         }
         // needed only when `auto_commit_enabled` is false
-        println!("commit_async");
         consumer.commit_async().await?;
-        println!("done");
     }
     println!("Done looping");
     Ok(())
@@ -183,7 +181,6 @@ async fn main() -> Result<(), Box<Error>> {
 
 
     let bytes: Vec<u8> = Vec::new();
-    //header_decoder(bytes);
 
     kafka_udp_process(args).await?;
     Ok(())

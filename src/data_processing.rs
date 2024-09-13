@@ -8,27 +8,31 @@ pub fn process_udp_to_kafka(udp_hex: &str) -> Vec<&str>{
     let kafka_bytes: Vec<&str> = Vec::new();
 
     // Split into the different frames in the packet
+    // Filters any empty frames each time
     let (frames_udp, frames_types) = packet_to_frames(udp_hex);
 
-    // Filter any frames not worth processing
-    let (frames_udp, frames_types) = filter_frames_to_process(frames_udp, frames_types);
-
-    println!("Filtered Len: {}", frames_udp.len());
-   // println!("Types: {:?}", frames_types);
-    //println!("UDP data: {:?}", frames_udp);
-
-    for frame_i in 0..frames_udp.len(){
-        match frames_types[frame_i] {
-            1=>println!("PROC For Neutron Frame Header"),
-            2=>println!("PROC For Veto Frame Header"),
-            3=>println!("PROC For SE Frame Header"),
-            _=>println!("Undefined frame type")
-        }
+    if frames_types.len() == 0{
+        let elapsed = now.elapsed();
+        println!("Elapsed: {:.2?}", elapsed);
+        kafka_bytes
     }
-    let elapsed = now.elapsed();
-    println!("Elapsed: {:.2?}", elapsed);
+    else {  // If there are valid frames to deal with
+        println!("Filtered Len: {}", frames_udp.len());
+        println!("Types: {:?}", frames_types);
+        //println!("UDP data: {:?}", frames_udp);
 
-    // Process each found frame
+        for frame_i in 0..frames_udp.len() {
+            match frames_types[frame_i] {
+                1 => println!("PROC For Neutron Frame Header - {:?}", frames_udp[frame_i]),
+                2 => println!("PROC For Veto Frame Header"),
+                3 => println!("PROC For SE Frame Header"),
+                _ => println!("Undefined frame type")
+            }
+        }
+        let elapsed = now.elapsed();
+        println!("Elapsed: {:.2?}", elapsed);
+
+        // Process each found frame
 
 
         // else if neutron
@@ -38,10 +42,15 @@ pub fn process_udp_to_kafka(udp_hex: &str) -> Vec<&str>{
         // else if SE
 
 
-    kafka_bytes
+        kafka_bytes
+    }
 }
 
 fn packet_to_frames(udp_hex: &str) -> (Vec<&str>, Vec<u8>){
+    // Takes in a reference to a hex string containing UDP data
+    // Returns two vectors, first of each frame second of the frame type
+    // Vectors will have a len of 0 if no frames found
+
     let veto_frame_header = "fcffffff";
     let se_frame_header = "fdffffff";
     let neutron_header = "ffffffff";
@@ -71,71 +80,42 @@ fn packet_to_frames(udp_hex: &str) -> (Vec<&str>, Vec<u8>){
 
     // If no frames found return the empty Vec
     if frame_index.len() == 0 {(frame_bytes, frame_types)}
+
     // If one frame found append entire UDP packet
     else if frame_index.len() == 1 {
         frame_bytes.push(udp_hex);
         (frame_bytes, frame_types)
     }
+
     // multiple frames found, append each to the vec
     else {
-        for i in 0..frame_index.len(){
+        for i in (0..frame_index.len()).rev(){  // Do this backwards as removing Vec entries
             if i == frame_index.len()-1{
-                frame_bytes.push(&udp_hex[(frame_index[i] * 8) as usize..udp_hex.len()]);
-
+                let hex = &udp_hex[(frame_index[i] * 8) as usize..udp_hex.len()];
+                if hex.len() >= 128{    //Size checking here to see if its worth adding to the list of frames
+                    frame_bytes.push(hex);
+                }
+                else{
+                    frame_types.remove(i);
+                }
             }
             else{
-                frame_bytes.push(&udp_hex[(frame_index[i] * 8) as usize..(frame_index[i+1] * 8) as usize]);
+                let hex = &udp_hex[(frame_index[i] * 8) as usize..(frame_index[i+1] * 8) as usize];
+                if hex.len() >= 128{    //Size checking here to see if its worth adding to the list of frames
+                    frame_bytes.push(hex);
+                }
+                else{
+                    frame_types.remove(i);
+                }
             }
         }
         (frame_bytes, frame_types)
     }
 }
 
-fn filter_frames_to_process(mut frame_udp: Vec<&str>, mut frame_types: Vec<u8>) -> (Vec<&str>, Vec<u8>){
-    // Code to filter the two frame vectors to see which ones are worth processing further
-    // Currently just checks the length of each frame. If this is the same or smaller than a header
-    // the frame data is removed from the vector
-
-    // Do the for loop in reverse -> as items are removed the len changes to harder to do
-    for frame_index in (0..frame_udp.len()).rev(){
-        if frame_udp[frame_index].len() <= 128{
-            //println!("Removing Short frame");
-            // Frame is same size or smaller than a frame header
-            frame_udp.remove(frame_index);
-            frame_types.remove(frame_index);
-        }
-    }
-    (frame_udp, frame_types)
-}
-
-pub fn header_decoder(bytes: Vec<u8>){
-    let hex_word = "ffffffff";
-    let non_header = "00000000";
-    let mut hex: String = "".to_string();
-    for i in 0..10000 {
-       // println!("{i}");
-        hex.push_str(hex_word);
-        for j in 0..i{
-            hex.push_str(non_header);
-        }
-    }
-
-
-    // let u8_vec = hex_to_u8_vec(hex).unwrap();
-    let bin = hex_to_bool_vec(&hex).unwrap();
-    //println!("hex: {hex}");
-    println!("bin_len: {}", bin.len());
-
-    // let words = group_bytes_by_events(&hex, 2);
-    let frames = process_udp_to_kafka(&hex);
-    println!("{frames:?}");
-    //println!("{words:?}");
-
-
-    // let header_bytes = bytes[0..128];
-    // for byte in header_bytes{
+pub fn header_decoder(udp_hex: &str){
     //
-    // }
+
 }
 
 fn group_bytes_by_events(udp_hex: &str, words_per_event: usize) -> Vec<&str>{
