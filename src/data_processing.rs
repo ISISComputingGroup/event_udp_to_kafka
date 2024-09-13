@@ -1,4 +1,8 @@
 use std::io::Bytes;
+use std::u32;
+use serde_json::from_str;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use chrono::prelude::*;
 
 pub fn process_udp_to_kafka(udp_hex: &str) -> Vec<&str>{
     use std::time::Instant;
@@ -10,20 +14,20 @@ pub fn process_udp_to_kafka(udp_hex: &str) -> Vec<&str>{
     // Split into the different frames in the packet
     // Filters any empty frames each time
     let (frames_udp, frames_types) = packet_to_frames(udp_hex);
-
     if frames_types.len() == 0{
         let elapsed = now.elapsed();
-        println!("Elapsed: {:.2?}", elapsed);
+       // println!("Elapsed: {:.2?}", elapsed);
         kafka_bytes
     }
     else {  // If there are valid frames to deal with
-        println!("Filtered Len: {}", frames_udp.len());
-        println!("Types: {:?}", frames_types);
+        println!("NFilt: {} - Types: {:?}", frames_udp.len(), frames_types);
         //println!("UDP data: {:?}", frames_udp);
-
         for frame_i in 0..frames_udp.len() {
             match frames_types[frame_i] {
-                1 => println!("PROC For Neutron Frame Header - {:?}", frames_udp[frame_i]),
+                1 => {
+                    //println!("PROC For Neutron Frame Header - {:?}", frames_udp[frame_i]);
+                    process_neutron_frame(frames_udp[frame_i]);
+                },
                 2 => println!("PROC For Veto Frame Header"),
                 3 => println!("PROC For SE Frame Header"),
                 _ => println!("Undefined frame type")
@@ -31,6 +35,12 @@ pub fn process_udp_to_kafka(udp_hex: &str) -> Vec<&str>{
         }
         let elapsed = now.elapsed();
         println!("Elapsed: {:.2?}", elapsed);
+        println!();
+
+
+
+
+
 
         // Process each found frame
 
@@ -113,9 +123,75 @@ fn packet_to_frames(udp_hex: &str) -> (Vec<&str>, Vec<u8>){
     }
 }
 
-pub fn header_decoder(udp_hex: &str){
-    //
+pub fn process_neutron_frame(frame_udp: &str){
+    let num_words = frame_udp.len() / 8;
+    let exp_events = (num_words - 15) / 2;  // could be less if PCB has added padding Zeros
+    println!("NeutronF - NWords {}, NEvent {}", num_words, exp_events);
 
+    //Process Header
+    let (events_in_frame, frame_number, period_num, ppp_in_frame, total_ns) = header_decoder(&frame_udp[0..120]);
+
+    let events_only_hex = &frame_udp[120..];
+
+    // For each of the expected events
+    for event_i in 0..events_in_frame{
+        let addr = (event_i * 16) as usize;
+        let event_hex = &events_only_hex[addr..addr + 16];
+
+        println!("{event_i} - {event_hex}");
+
+    }
+
+
+}
+
+pub fn header_decoder(header_udp: &str) -> (u32, u32, u16, u16, u64){
+    // decodes a frame header
+
+    // Uncomment to print the header words to terminal
+    // for i in 0..15{
+    //     println!("i{} {}:{} - {}", i+1, i*8, i*8+8, &header_udp[i*8..i*8+8]);
+    // }
+
+    // need to get
+    // - ifVeto
+    // - GPS time -> Format to nS since epoch
+    // - Period Number
+    // - Events in Frame
+
+    let frame_number = u32::from_str_radix(&header_udp[16..24], 16).unwrap();
+    let period_num = u16::from_str_radix(&header_udp[44..48], 16).unwrap();
+    let events_in_frame = u32::from_str_radix(&header_udp[48..56], 16).unwrap();
+    let ppp_in_frame = u16::from_str_radix(&header_udp[60..64], 16).unwrap();
+
+    // Get GPS Time
+    let bin_time :&str = &bin_to_hex(&header_udp[24..40]);  // Get data as binary string
+
+
+    let years = u16::from_str_radix(&bin_time[0..8], 2).unwrap() + 2000;
+    let days = u32::from_str_radix(&bin_time[8..17], 2).unwrap();
+    let hours = u8::from_str_radix(&bin_time[17..22], 2).unwrap();
+    let mins = u8::from_str_radix(&bin_time[22..28], 2).unwrap();
+    let secs = u8::from_str_radix(&bin_time[28..34], 2).unwrap();
+    let m_secs = u16::from_str_radix(&bin_time[34..44], 2).unwrap();
+    let u_secs = u16::from_str_radix(&bin_time[44..54], 2).unwrap();
+    let n_secs = u64::from_str_radix(&bin_time[54..64], 2).unwrap();
+
+    let datetime_again: DateTime<Utc> = DateTime::from_utc(NaiveDateTime::from(NaiveDate::from_yo_opt(years as i32, days).unwrap()), Utc);
+    let years_days_as_ns = datetime_again.timestamp() as u64 * 1e9 as u64;
+
+    let hours_as_ns = hours as u64 * 3.6e12 as u64;
+    let mins_as_ns = mins as u64 * 6e10 as u64;
+    let secs_as_ns = secs as u64 * 1e9 as u64;
+    let m_secs_as_ns = m_secs as u64 * 1000000;
+    let u_secs_as_ns = u_secs as u64 * 1000;
+
+    let total_ns: u64 = n_secs + u_secs_as_ns + m_secs_as_ns + secs_as_ns + mins_as_ns + hours_as_ns + years_days_as_ns;
+
+    println!("F: {} - E: {} - PER: {} - PPP: {} - TnS: {}", frame_number, events_in_frame, period_num, ppp_in_frame, total_ns);
+    // println!("time: Y-{years}:D-{days}:H-{hours}:M-{mins}:S-{secs}:mS-{m_secs}:uS-{u_secs}:nS-{n_secs}");
+    // println!("time nS: {}", total_ns);
+    (events_in_frame, frame_number, period_num, ppp_in_frame, total_ns)
 }
 
 fn group_bytes_by_events(udp_hex: &str, words_per_event: usize) -> Vec<&str>{
@@ -158,6 +234,38 @@ fn hex_to_bool_vec(hex_str: &str) -> Result<Vec<bool>, String> {
         .collect();
 
     Ok(bool_vec)
+}
+
+fn bin_to_hex(hex: &str) -> String {
+    hex.chars().map(to_binary).collect()
+}
+
+fn to_binary(c: char) -> &'static str {
+    match c {
+        '0' => "0000",
+        '1' => "0001",
+        '2' => "0010",
+        '3' => "0011",
+        '4' => "0100",
+        '5' => "0101",
+        '6' => "0110",
+        '7' => "0111",
+        '8' => "1000",
+        '9' => "1001",
+        'a' => "1010",
+        'b' => "1011",
+        'c' => "1100",
+        'd' => "1101",
+        'e' => "1110",
+        'f' => "1111",
+        // 'A' => "1010",
+        // 'B' => "1011",
+        // 'C' => "1100",
+        // 'D' => "1101",
+        // 'E' => "1110",
+        // 'F' => "1111",
+        _ => "",
+    }
 }
 
 

@@ -1473,6 +1473,7 @@ name = "rust-data-stream-processor"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "chrono",
  "clap",
  "futures",
  "indexmap",
