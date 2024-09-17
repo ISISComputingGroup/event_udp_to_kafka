@@ -37,21 +37,6 @@ pub fn process_udp_to_kafka(udp_hex: &str) -> Vec<&str>{
         println!("Elapsed: {:.2?}", elapsed);
         println!();
 
-
-
-
-
-
-        // Process each found frame
-
-
-        // else if neutron
-
-        // else if Veto
-
-        // else if SE
-
-
         kafka_bytes
     }
 }
@@ -126,21 +111,40 @@ fn packet_to_frames(udp_hex: &str) -> (Vec<&str>, Vec<u8>){
 pub fn process_neutron_frame(frame_udp: &str){
     let num_words = frame_udp.len() / 8;
     let exp_events = (num_words - 15) / 2;  // could be less if PCB has added padding Zeros
-    println!("NeutronF - NWords {}, NEvent {}", num_words, exp_events);
+    println!("NeuF - NW {}, NE {}", num_words, exp_events);
+    //println!("{frame_udp}");
 
     //Process Header
     let (events_in_frame, frame_number, period_num, ppp_in_frame, total_ns) = header_decoder(&frame_udp[0..120]);
 
     let events_only_hex = &frame_udp[120..];
 
+    let mut events_to_proc = events_in_frame;
+    if events_to_proc > exp_events as u32 {
+        events_to_proc = exp_events as u32;
+        println!("More Events in FHeader than Packet Size - F: {events_in_frame} - P: {exp_events}");
+    }
+
+    let mut tofs:Vec<u32> = Vec::new();
+    let mut vals:Vec<u32> = Vec::new();
+
     // For each of the expected events
-    for event_i in 0..events_in_frame{
+    for event_i in 0..events_to_proc{
         let addr = (event_i * 16) as usize;
         let event_hex = &events_only_hex[addr..addr + 16];
 
-        println!("{event_i} - {event_hex}");
+        let event_tof = u32::from_str_radix(&event_hex[2..8], 16).unwrap();
+        let event_val = u32::from_str_radix(&event_hex[8..16], 16).unwrap();
+
+        tofs.push(event_tof);
+        vals.push(event_val);
+
+        // Add code here to Map values to detector IDs
+
+        //println!("{event_i} - {event_hex} - TOF: {event_tof} - VAL: {event_val}");
 
     }
+    println!("Got - {}", tofs.len());
 
 
 }
@@ -167,7 +171,6 @@ pub fn header_decoder(header_udp: &str) -> (u32, u32, u16, u16, u64){
     // Get GPS Time
     let bin_time :&str = &bin_to_hex(&header_udp[24..40]);  // Get data as binary string
 
-
     let years = u16::from_str_radix(&bin_time[0..8], 2).unwrap() + 2000;
     let days = u32::from_str_radix(&bin_time[8..17], 2).unwrap();
     let hours = u8::from_str_radix(&bin_time[17..22], 2).unwrap();
@@ -189,7 +192,7 @@ pub fn header_decoder(header_udp: &str) -> (u32, u32, u16, u16, u64){
     let total_ns: u64 = n_secs + u_secs_as_ns + m_secs_as_ns + secs_as_ns + mins_as_ns + hours_as_ns + years_days_as_ns;
 
     println!("F: {} - E: {} - PER: {} - PPP: {} - TnS: {}", frame_number, events_in_frame, period_num, ppp_in_frame, total_ns);
-    // println!("time: Y-{years}:D-{days}:H-{hours}:M-{mins}:S-{secs}:mS-{m_secs}:uS-{u_secs}:nS-{n_secs}");
+    println!("time: Y-{years}:D-{days}:H-{hours}:M-{mins}:S-{secs}:mS-{m_secs}:uS-{u_secs}:nS-{n_secs}");
     // println!("time nS: {}", total_ns);
     (events_in_frame, frame_number, period_num, ppp_in_frame, total_ns)
 }

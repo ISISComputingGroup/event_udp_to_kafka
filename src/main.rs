@@ -9,6 +9,15 @@ pub use crate::metrics_logger::demo;
 //pub use crate::data_processing::header_decoder;
 pub use crate::data_processing::process_udp_to_kafka;
 
+use rdkafka::client::ClientContext;
+use rdkafka::config::{ClientConfig, RDKafkaLogLevel};
+use rdkafka::consumer::stream_consumer::StreamConsumer;
+// use rdkafka::consumer::{BaseConsumer, CommitMode, Consumer, ConsumerContext, Rebalance};
+use rdkafka::error::KafkaResult;
+use rdkafka::message::{Headers, Message};
+use rdkafka::topic_partition_list::TopicPartitionList;
+use rdkafka::util::get_rdkafka_version;
+
 use futures::{SinkExt, StreamExt, pin_mut};
 use kafkas::{
     topic_name, Error, Kafka, KafkaOptions, Producer, ProducerOptions, Consumer, ConsumerRecord, ConsumerOptions,
@@ -62,8 +71,12 @@ struct Args {
     /// This script is mainly designed to function in the Kafka-> Kafka configuration
     /// With the UDP->Kafka rust buffering via kafka. This gives some failover, and potential throughput options
     ///
-    #[arg(short='m', long, verbatim_doc_comment)]
+    #[arg(short='m', long, verbatim_doc_comment, default_value_t = 0)]
     mode: u32,
+
+    // Consumer group to use when connecting to Kafka
+    #[arg(short='t', long, default_value="default_rust_proc")]
+    consumer_grp: String,
 }
 
 #[derive(Deserialize)]
@@ -137,7 +150,7 @@ async fn kafka_udp_process(cmd_args: Args) -> Result<(), Box<Error>>{
     let kafka_client_dest = Kafka::new(kafka_broker_dest, KafkaOptions::default(), TokioExecutor).await?;
 
     //define consumer
-    let mut consumer_options = ConsumerOptions::new("default-rust");
+    let mut consumer_options = ConsumerOptions::new(&cmd_args.consumer_grp);
     consumer_options.auto_commit_enabled = false;
     let mut consumer = Consumer::new(kafka_client_src, consumer_options).await?;
     let consume_stream = consumer.subscribe::<&str, ConsumerRecord>(vec![&cmd_args.src_kafka_topic]).await?;
