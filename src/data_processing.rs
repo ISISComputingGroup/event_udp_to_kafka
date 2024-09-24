@@ -1,32 +1,39 @@
+mod ev42_events_generated;
 use std::io::Bytes;
 use std::u32;
 use serde_json::from_str;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use chrono::prelude::*;
+use crate::wiring_config_record;
+extern crate flatbuffers;
 
-pub fn process_udp_to_kafka(udp_hex: &str) -> Vec<&str>{
+use flatbuffers::FlatBufferBuilder;
+use ev42_events_generated::{EventMessage, EventMessageArgs, finish_event_message_buffer, root_as_event_message};
+//use crate::ev42_events_generated::{UInt32ArrayArgs, ValueUnion};
+
+pub fn process_udp_to_kafka<'a>(udp_hex: &'a str, src_ip: &'a str, wiring_config: &'a Vec<wiring_config_record>) -> Vec<Vec<u8>>{
     use std::time::Instant;
     let now = Instant::now();
 
     // make the vector for the product now
-    let kafka_bytes: Vec<&str> = Vec::new();
+    let mut kafka_bytes: Vec<Vec<u8>> = Vec::new();
 
     // Split into the different frames in the packet
     // Filters any empty frames each time
     let (frames_udp, frames_types) = packet_to_frames(udp_hex);
     if frames_types.len() == 0{
-        let elapsed = now.elapsed();
+       // let elapsed = now.elapsed();
        // println!("Elapsed: {:.2?}", elapsed);
         kafka_bytes
     }
     else {  // If there are valid frames to deal with
-        println!("NFilt: {} - Types: {:?}", frames_udp.len(), frames_types);
+        // println!("NFilt: {} - Types: {:?}", frames_udp.len(), frames_types);
         //println!("UDP data: {:?}", frames_udp);
         for frame_i in 0..frames_udp.len() {
             match frames_types[frame_i] {
                 1 => {
                     //println!("PROC For Neutron Frame Header - {:?}", frames_udp[frame_i]);
-                    process_neutron_frame(frames_udp[frame_i]);
+                    process_neutron_frame(frames_udp[frame_i], src_ip, wiring_config, &mut kafka_bytes);
                 },
                 2 => println!("PROC For Veto Frame Header"),
                 3 => println!("PROC For SE Frame Header"),
@@ -34,8 +41,9 @@ pub fn process_udp_to_kafka(udp_hex: &str) -> Vec<&str>{
             }
         }
         let elapsed = now.elapsed();
-        println!("Elapsed: {:.2?}", elapsed);
-        println!();
+        // println!("Elapsed: {:.2?} - bytes: {:?}", elapsed, kafka_bytes);
+        println!("UDP->EV42 Time: {:.2?}", elapsed, );
+        // println!();
 
         kafka_bytes
     }
@@ -108,14 +116,14 @@ fn packet_to_frames(udp_hex: &str) -> (Vec<&str>, Vec<u8>){
     }
 }
 
-pub fn process_neutron_frame(frame_udp: &str){
+pub fn process_neutron_frame(frame_udp: &str, src_ip: &str, wiring_config: &Vec<wiring_config_record>, ev42_fb_packets: &mut Vec<Vec<u8>>){
     let num_words = frame_udp.len() / 8;
     let exp_events = (num_words - 15) / 2;  // could be less if PCB has added padding Zeros
-    println!("NeuF - NW {}, NE {}", num_words, exp_events);
-    //println!("{frame_udp}");
+    // println!("{src_ip} NeuF - NW {}, NE {}", num_words, exp_events);
+    // println!("{frame_udp}");
 
     //Process Header
-    let (events_in_frame, frame_number, period_num, ppp_in_frame, total_ns) = header_decoder(&frame_udp[0..120]);
+    let (events_in_frame, frame_number, period_num, ppp_in_frame, frame_time_ns) = header_decoder(&frame_udp[0..120]);
 
     let events_only_hex = &frame_udp[120..];
 
@@ -126,27 +134,69 @@ pub fn process_neutron_frame(frame_udp: &str){
     }
 
     let mut tofs:Vec<u32> = Vec::new();
-    let mut vals:Vec<u32> = Vec::new();
+    let mut det_ids:Vec<u32> = Vec::new();
+    let mut bldr = FlatBufferBuilder::new();
 
-    // For each of the expected events
-    for event_i in 0..events_to_proc{
-        let addr = (event_i * 16) as usize;
-        let event_hex = &events_only_hex[addr..addr + 16];
+    // find IP address within the wiring config - get config line
+    let mut packet_config: &wiring_config_record = wiring_config.first().unwrap();
+    let mut num_matches = 0;
+    for line in wiring_config{
+        if src_ip == line.StreamingIP{
+            num_matches += 1;
+            packet_config = line;
+        }
+    }
 
-        let event_tof = u32::from_str_radix(&event_hex[2..8], 16).unwrap();
-        let event_val = u32::from_str_radix(&event_hex[8..16], 16).unwrap();
+    if num_matches == 1 {
+        match packet_config.BRD_Type.as_str() {
+            "PC3634M1S" => {(tofs, det_ids) = process_pc3634m1_events(events_only_hex, packet_config, events_to_proc); }
+            _ => {
+                println!("Unable to PROC -> Unknown BRD Type");
+            }
+        }
 
-        tofs.push(event_tof);
-        vals.push(event_val);
 
-        // Add code here to Map values to detector IDs
-
-        //println!("{event_i} - {event_hex} - TOF: {event_tof} - VAL: {event_val}");
+        // println!("Ne-{}", tofs.len());
+        let mut fb_bytes: Vec<u8> = Vec::new(); //vector to hold ev42 bytes
+        encode_ev42(&mut bldr, &mut fb_bytes, "rust_proc", 0,frame_time_ns, &tofs, &det_ids);
+        //println!("fb: {:?}", fb_bytes);
+        ev42_fb_packets.push(fb_bytes);
 
     }
-    println!("Got - {}", tofs.len());
+    else {
+        return;
+    }
 
 
+}
+
+fn process_pc3634m1_events(events_hex: &str, packet_config: &wiring_config_record, events_to_proc: u32)-> (Vec<u32>, Vec<u32>) {
+    let mut tofs: Vec<u32> = Vec::new();
+    let mut det_ids: Vec<u32> = Vec::new();
+
+    match packet_config.Packet_Type.as_str() {
+        "DIM_OUT" => {
+            for event_i in 0..events_to_proc {
+                let addr = (event_i * 16) as usize;
+                let event_hex = &events_hex[addr..addr + 16];
+
+                let event_tof = u32::from_str_radix(&event_hex[2..8], 16).unwrap();
+                let event_val = u32::from_str_radix(&event_hex[8..16], 16).unwrap();
+
+                let det_id = event_val + packet_config.Mantid_DetectorID_Start;
+
+                tofs.push(event_tof);
+                det_ids.push(det_id);
+
+                //println!("{event_i} - {event_hex} - TOF: {event_tof} - VAL: {event_val} - DETID: {det_id}");
+            }
+            (tofs, det_ids)
+        }
+        _ => {
+            println!("Unable to PROC -> Unknown stream type in config");
+            (tofs, det_ids)
+        }
+    }
 }
 
 pub fn header_decoder(header_udp: &str) -> (u32, u32, u16, u16, u64){
@@ -191,8 +241,8 @@ pub fn header_decoder(header_udp: &str) -> (u32, u32, u16, u16, u64){
 
     let total_ns: u64 = n_secs + u_secs_as_ns + m_secs_as_ns + secs_as_ns + mins_as_ns + hours_as_ns + years_days_as_ns;
 
-    println!("F: {} - E: {} - PER: {} - PPP: {} - TnS: {}", frame_number, events_in_frame, period_num, ppp_in_frame, total_ns);
-    println!("time: Y-{years}:D-{days}:H-{hours}:M-{mins}:S-{secs}:mS-{m_secs}:uS-{u_secs}:nS-{n_secs}");
+    //println!("F: {} - E: {} - PER: {} - PPP: {} - TnS: {}", frame_number, events_in_frame, period_num, ppp_in_frame, total_ns);
+    //println!("time: Y-{years}:D-{days}:H-{hours}:M-{mins}:S-{secs}:mS-{m_secs}:uS-{u_secs}:nS-{n_secs}");
     // println!("time nS: {}", total_ns);
     (events_in_frame, frame_number, period_num, ppp_in_frame, total_ns)
 }
@@ -212,6 +262,26 @@ fn group_bytes_by_events(udp_hex: &str, words_per_event: usize) -> Vec<&str>{
 
     // let event_bytes: Vec<Vec<u8>> = udp_hex.chunks(bytes_per_event).map(|c| c.to_vec()).collect();
     // event_bytes
+}
+
+fn encode_ev42(bldr: &mut FlatBufferBuilder, dest: &mut Vec<u8>, source_name: &str, message_id: u64, pulse_time: u64, tofs: &Vec<u32>, det_ids: &Vec<u32>){
+    dest.clear();
+    bldr.reset();
+
+    let args = EventMessageArgs{
+        source_name: Option::from(bldr.create_string("DAE_Streamed_RustProc")),
+        message_id: message_id,
+        pulse_time: pulse_time,
+        time_of_flight: Option::from(bldr.create_vector(tofs)),
+        detector_id: Option::from(bldr.create_vector(det_ids)),
+        facility_specific_data_type: Default::default(),
+        facility_specific_data: None,
+    };
+
+    let ev42_offset = EventMessage::create(bldr, &args);
+    finish_event_message_buffer(bldr, ev42_offset);
+    let finished_data = bldr.finished_data();
+    dest.extend_from_slice(finished_data);
 }
 
 fn hex_to_bool_vec(hex_str: &str) -> Result<Vec<bool>, String> {
@@ -261,12 +331,6 @@ fn to_binary(c: char) -> &'static str {
         'd' => "1101",
         'e' => "1110",
         'f' => "1111",
-        // 'A' => "1010",
-        // 'B' => "1011",
-        // 'C' => "1100",
-        // 'D' => "1101",
-        // 'E' => "1110",
-        // 'F' => "1111",
         _ => "",
     }
 }

@@ -4,6 +4,7 @@ mod metrics_logger;
 mod data_processing;
 
 //use std::io::Error;
+use std::error::Error;
 use std::{fmt::Write, num::ParseIntError};
 pub use crate::metrics_logger::demo;
 //pub use crate::data_processing::header_decoder;
@@ -12,22 +13,44 @@ pub use crate::data_processing::process_udp_to_kafka;
 use rdkafka::client::ClientContext;
 use rdkafka::config::{ClientConfig, RDKafkaLogLevel};
 use rdkafka::consumer::stream_consumer::StreamConsumer;
-// use rdkafka::consumer::{BaseConsumer, CommitMode, Consumer, ConsumerContext, Rebalance};
+use rdkafka::consumer::{BaseConsumer, CommitMode, Consumer, ConsumerContext, Rebalance};
+use rdkafka::producer::{FutureProducer, FutureRecord};
 use rdkafka::error::KafkaResult;
 use rdkafka::message::{Headers, Message};
 use rdkafka::topic_partition_list::TopicPartitionList;
 use rdkafka::util::get_rdkafka_version;
-
-use futures::{SinkExt, StreamExt, pin_mut};
-use kafkas::{
-    topic_name, Error, Kafka, KafkaOptions, Producer, ProducerOptions, Consumer, ConsumerRecord, ConsumerOptions,
-    Record, SerializeMessage,
-    TimestampType, TokioExecutor, NO_PARTITION_LEADER_EPOCH, NO_PRODUCER_EPOCH, NO_PRODUCER_ID,
-    NO_SEQUENCE,
-};
+use std::time::Duration;
 use bytes::Bytes;
 use serde::Deserialize;
-use clap::Parser;
+use clap::{Arg, Parser};
+extern crate csv;
+
+use std::fs::File;
+use std::path::Path;
+
+// A context can be used to change the behavior of producers and consumers by adding callbacks
+// that will be executed by librdkafka.
+// This particular context sets up custom callbacks to log rebalancing events.
+struct CustomContext;
+
+impl ClientContext for CustomContext {}
+
+impl ConsumerContext for CustomContext {
+    fn pre_rebalance(&self, rebalance: &Rebalance) {
+        println!("Pre rebalance {:?}", rebalance);
+    }
+
+    fn post_rebalance(&self, rebalance: &Rebalance) {
+        println!("Post rebalance {:?}", rebalance);
+    }
+
+    fn commit_callback(&self, result: KafkaResult<()>, _offsets: &TopicPartitionList) {
+        println!("Committing offsets: {:?}", result);
+    }
+}
+
+// A type alias with your custom consumer can be created for convenience.
+type LoggingConsumer = StreamConsumer<CustomContext>;
 
 
 #[derive(Parser, Debug)]
@@ -42,24 +65,16 @@ struct Args {
     host_ip: String,
 
     /// url of the kafka broker
-    #[arg(short='k', long, default_value = "te7gull.te.rl.ac.uk")]
+    #[arg(short='k', long, default_value = "te7gull.te.rl.ac.uk:19092")]
     dest_kafka_broker: String,
-
-    /// Port to use for kafka communication - defaults for Redpanda kafka
-    #[arg(short='b', long, default_value_t = 19092)]
-    dest_kafka_port: u32,
 
     /// Kafka topic to send the data to
     #[arg(short='d', long)]
     dest_kafka_topic: String,
 
     /// url of the kafka broker
-    #[arg(long, default_value = "te7gull.te.rl.ac.uk")]
+    #[arg(long, default_value = "te7gull.te.rl.ac.uk:19092")]
     src_kafka_broker: String,
-
-    /// Port to use for kafka communication - defaults for Redpanda kafka
-    #[arg(long, default_value_t = 19092)]
-    src_kafka_port: u32,
 
     /// Kafka topic to get data from
     #[arg(short='t', long, default_value="")]
@@ -75,8 +90,12 @@ struct Args {
     mode: u32,
 
     // Consumer group to use when connecting to Kafka
-    #[arg(short='t', long, default_value="default_rust_proc")]
+    #[arg(short='g', long, default_value="default_rust_proc")]
     consumer_grp: String,
+
+    // Filepath to the wiring configuration file (csv)
+    #[arg(short='w', long)]
+    wiring_csv_path: String,
 }
 
 #[derive(Deserialize)]
@@ -93,101 +112,151 @@ pub fn decode_hex(s: &str) -> Result<Vec<u8>, ParseIntError> {
         .collect()
 }
 
-struct KafkaData {
-    value: Option<Bytes>,
+#[derive(Debug, serde::Deserialize)]
+struct wiring_config_record {
+    BRD_NUM: u8,
+    BRD_Ref: String,
+    BRD_Type: String,
+    Packet_Type: String,
+    SW_Pos: u8,
+    StreamingIP: String,
+    CH: u8,
+    Mantid_DetectorID_Start: u32,
+    Mantid_Detector_ID_Lenght: u32,
+    Comment: String,
+
 }
 
-impl KafkaData {
-    fn new(value: &str) -> Self {
-        Self {
-            value: Some(Bytes::copy_from_slice(value.as_bytes())),
-        }
+fn read_csv<P: AsRef<Path>>(filename: P) -> Vec<wiring_config_record>{
+    let file = File::open(filename).unwrap();
+    let mut rdr = csv::Reader::from_reader(file);
+
+    let mut csv_config = Vec::new();
+
+    for result in rdr.deserialize() {
+        let line: wiring_config_record = result.unwrap();
+        println!("{:?}", line);
+        csv_config.push(line);
     }
+    csv_config
 }
 
-impl SerializeMessage for KafkaData {
-    fn partition(&self) -> Option<i32> {
-        None
-    }
 
-    fn key(&self) -> Option<&Bytes> {
-        None
-    }
+async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<wiring_config_record>) {
+    println!("Do UDP processing");
+    println!("{:#?}", cmd_args);
+    let kafka_broker = cmd_args.src_kafka_broker;
+    let dest_topic_name = cmd_args.dest_kafka_topic.as_str();
 
-    fn value(&self) -> Option<&Bytes> {
-        self.value.as_ref()
-    }
+    let context = CustomContext;
 
-    fn serialize_message(input: Self) -> kafkas::Result<Record> {
-        Ok(Record {
-            transactional: false,
-            control: false,
-            partition_leader_epoch: NO_PARTITION_LEADER_EPOCH,
-            producer_id: NO_PRODUCER_ID,
-            producer_epoch: NO_PRODUCER_EPOCH,
-            timestamp_type: TimestampType::Creation,
-            offset: -1,
-            sequence: NO_SEQUENCE,
-            timestamp: 0,
-            key: None,
-            value: input.value,
-            headers: indexmap::IndexMap::new(),
-        })
-    }
-}
+    let consumer: LoggingConsumer = ClientConfig::new()
+        .set("group.id", cmd_args.consumer_grp)
+        .set("bootstrap.servers", &kafka_broker)
+        .set("enable.partition.eof", "false")
+        .set("session.timeout.ms", "6000")
+        .set("enable.auto.commit", "true")
+        //.set("statistics.interval.ms", "30000")
+        .set("auto.offset.reset", "smallest")
+        .set_log_level(RDKafkaLogLevel::Debug)
+        .create_with_context(context)
+        .expect("Consumer creation failed");
 
-async fn kafka_udp_process(cmd_args: Args) -> Result<(), Box<Error>>{
+    let producer: &FutureProducer = &ClientConfig::new()
+        .set("bootstrap.servers", &kafka_broker)
+        .set("message.timeout.ms", "5000")
+        .create()
+        .expect("Producer creation error");
+
+    consumer
+        .subscribe(&[cmd_args.src_kafka_topic.as_str()])
+        .expect("Can't subscribe to specified topics");
     println!("Mode 0 - Kafka -> Kafka Processing");
-    let kafka_broker_src = format!("{}:{}", cmd_args.src_kafka_broker, cmd_args.src_kafka_port);
-    let kafka_broker_dest = format!("{}:{}", cmd_args.dest_kafka_broker, cmd_args.dest_kafka_port);
+    loop {
+        match consumer.recv().await {
+            Err(e) => println!("Kafka error: {}", e),
+            Ok(m) => {
+                let payload = match m.payload_view::<str>() {
+                    None => "",
+                    Some(Ok(s)) => s,
+                    Some(Err(e)) => {
+                        println!("Error while deserializing message payload: {:?}", e);
+                        ""
+                    }
+                };
+                use std::time::Instant;
+                let now = Instant::now();
 
-    println!("Kafka SRC: {}", &kafka_broker_src);
-    println!("Kafka Dest: {}", &kafka_broker_dest);
+                // Process the Data
+                let raw_udpjson: rawUdpJSON = serde_json::from_slice(m.payload().unwrap()).unwrap();
 
-    //let kafka_broker_src: String = "localhost:19092,localhost:29092,localhost:39092".to_string();
+                let kafka_fbs = process_udp_to_kafka(&raw_udpjson.packet_data, &raw_udpjson.src, &wiring_config);
+                consumer.commit_message(&m, CommitMode::Async).unwrap();
 
-    let kafka_client_src = Kafka::new(kafka_broker_src, KafkaOptions::default(), TokioExecutor).await?;
-    let kafka_client_dest = Kafka::new(kafka_broker_dest, KafkaOptions::default(), TokioExecutor).await?;
+                println!("Num Kafka Messages to Prod: {}", kafka_fbs.len());
 
-    //define consumer
-    let mut consumer_options = ConsumerOptions::new(&cmd_args.consumer_grp);
-    consumer_options.auto_commit_enabled = false;
-    let mut consumer = Consumer::new(kafka_client_src, consumer_options).await?;
-    let consume_stream = consumer.subscribe::<&str, ConsumerRecord>(vec![&cmd_args.src_kafka_topic]).await?;
-    pin_mut!(consume_stream);
+                // if kafka_fbs.len() != 0 {
+                //     let futures = kafka_fbs.iter()
+                //         .map(|i| tokio::spawn (async move {
+                //             // The send operation on the topic returns a future, which will be
+                //             // completed once the result or failure from Kafka is received.
+                //             let delivery_status = producer
+                //                 .send::<Vec<u8>, _, _>(
+                //                     FutureRecord::to("POLREF_rustEvents")
+                //                         .payload(i),
+                //                     Duration::from_secs(0),
+                //                 )
+                //                 .await;
+                //
+                //             // This will be executed when the result is received.
+                //             //info!("Delivery status for message {} received", i);
+                //             delivery_status
+                //         }))
+                //         .collect::<Vec<_>>();
 
-    //define producer
-    // let (mut tx, mut rx) = futures::channel::mpsc::unbounded();
-    // tokio::task::spawn(Box::pin(async move {
-    //     while let Some(fut) = rx.next().await {
-    //         if let Err(e) = fut.await {
-    //             error!("{e}");
-    //         }
-    //     }
-    // }));
+                //
+                //
+                //
+                    let futures = kafka_fbs.iter()
+                        .map(|i| async move {
+                            // The send operation on the topic returns a future, which will be
+                            // completed once the result or failure from Kafka is received.
+                            let delivery_status = producer
+                                .send::<Vec<u8>, _, _>(
+                                    FutureRecord::to(dest_topic_name)
+                                        .payload(i),
+                                    //    .key(&format!("Key {}", i)),
+                                    // .headers(OwnedHeaders::new().insert(Header {
+                                    //     key: "header_key",
+                                    //     value: Some("header_value"),
+                                    // })),
+                                    Duration::from_secs(0),
+                                )
+                                .await;
 
-    let producer = Producer::new(kafka_client_dest, ProducerOptions::default()).await?;
-    let dest_topic = topic_name(cmd_args.dest_kafka_topic);
+                            // This will be executed when the result is received.
+                            //println!("Delivery status for message - received");
+                            delivery_status
+                        })
+                        .collect::<Vec<_>>();
 
-    while let Some(records) = consume_stream.next().await {
-        for record in records {
-            if let Some(value) = record.value {
-                let raw_udpjson: rawUdpJSON = serde_json::from_slice(&value).unwrap();
-               // println!("Got MSG To PROC - SRC IP ADR: {}", raw_udpjson.src);
-                let kafka_fb = process_udp_to_kafka(&raw_udpjson.packet_data);
+                    // This loop will wait until all delivery statuses have been received.
+                    for future in futures {
+                        future.await.expect("TODO: panic message");
+                        //println!("Future completed. Result: {:?}", future.await);
+                    }
+
+                let elapsed = now.elapsed();
+                //println!("Elapsed: {:.2?}", elapsed, );
+                println!("PK_IP: {} - PROCt: {:?} ", raw_udpjson.src, elapsed);
 
             }
         }
-        // needed only when `auto_commit_enabled` is false
-        consumer.commit_async().await?;
     }
-    println!("Done looping");
-    Ok(())
-
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<Error>> {
+async fn main(){
     println!("DSG - Rust Data Processor");
     println!("Processing UDP data into the flatbuffers since 2024");
     let args = Args::parse();
@@ -195,6 +264,10 @@ async fn main() -> Result<(), Box<Error>> {
 
     let bytes: Vec<u8> = Vec::new();
 
-    kafka_udp_process(args).await?;
-    Ok(())
+
+    let filename = "C:\\GitLab\\rust-data-stream-processor\\src\\config\\wiring.csv";
+    let filename = args.wiring_csv_path.as_str();
+    let csv_data: Vec<wiring_config_record> = read_csv(args.wiring_csv_path.as_str());
+
+    kafka_udp_process(args, csv_data).await;
 }
