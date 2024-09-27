@@ -138,21 +138,25 @@ pub fn process_neutron_frame(frame_udp: &str, src_ip: &str, wiring_config: &Vec<
     let mut bldr = FlatBufferBuilder::new();
 
     // find IP address within the wiring config - get config line
-    let mut packet_config: &wiring_config_record = wiring_config.first().unwrap();
+    let mut packet_config_single: &wiring_config_record = wiring_config.first().unwrap();
+    let mut packet_config_multi: Vec<&wiring_config_record> = Vec::new();
+
     let mut num_matches = 0;
     for line in wiring_config{
         if src_ip == line.StreamingIP{
             num_matches += 1;
-            packet_config = line;
+            packet_config_single = line;
+            packet_config_multi.push(line);
         }
     }
 
-    if num_matches == 1 {
-        match packet_config.BRD_Type.as_str() {
-            "PC3634M1S" => {(tofs, det_ids) = process_pc3634m1_events(events_only_hex, packet_config, events_to_proc); }
+    if num_matches >= 1 {   // do we want this for LVDS or have if 1, else if greater than 1?
+        match packet_config_single.BRD_Type.as_str() {
+            "PC3634M1S" => {(tofs, det_ids) = process_pc3634m1_events(events_only_hex, packet_config_single, events_to_proc); }, //128CH LVDS Card
+            "PC3544MS" => {(tofs, det_ids) = process_pc3544ms_events(events_only_hex, packet_config_multi, events_to_proc); },  //MADC PB
             _ => {
                 println!("Unable to PROC -> Unknown BRD Type");
-            }
+            },
         }
 
 
@@ -168,6 +172,76 @@ pub fn process_neutron_frame(frame_udp: &str, src_ip: &str, wiring_config: &Vec<
     }
 
 
+}
+
+fn process_pc3544ms_events(events_hex: &str, packet_config: Vec<&wiring_config_record>, events_to_proc: u32)-> (Vec<u32>, Vec<u32>) {
+    let mut tofs: Vec<u32> = Vec::new();
+    let mut det_ids: Vec<u32> = Vec::new();
+    match packet_config[0].Packet_Type.as_str() {
+        "Position" => {
+            for event_i in 0..events_to_proc {
+                let addr = (event_i * 16) as usize;
+                let event_hex = &events_hex[addr..addr + 16];
+                let binary_event: &str = &hex_to_binary(event_hex);
+                let channel = u8::from_str_radix(&binary_event[35..38], 2).unwrap();
+                let event_position = u32::from_str_radix(&binary_event[52..64], 2).unwrap();
+
+                let mut channel_config: &wiring_config_record = &packet_config.first().unwrap();
+                let mut matches = 0;
+                for possible_channel in &packet_config{
+                    if channel == possible_channel.CH{
+                        channel_config = possible_channel;
+                        matches += 1;
+                    }
+                }
+                if matches == 1 {
+                    let detector_id = (event_position / (4096 / channel_config.Mantid_Detector_ID_Lenght)) + channel_config.Mantid_DetectorID_Start;
+                    let event_tof = u32::from_str_radix(&event_hex[2..8], 16).unwrap();
+
+                    tofs.push(event_tof);
+                    det_ids.push(detector_id);
+                    //println!("{event_i} - {event_hex} - TOF: {event_tof} - AdcCH: {channel} - VAL: {event_position} - DETID: {detector_id}");
+                }
+
+
+            }
+            (tofs, det_ids)
+        },
+        "PulseHeight" => {
+            println!("PulseHeight Packet");
+            for event_i in 0..events_to_proc {
+                let addr = (event_i * 16) as usize;
+                let event_hex = &events_hex[addr..addr + 16];
+                let binary_event: &str = &hex_to_binary(event_hex);
+                let channel = u8::from_str_radix(&binary_event[35..38], 2).unwrap();
+                let event_pulse_height= u32::from_str_radix(&binary_event[40..52], 2).unwrap();
+
+                let mut channel_config: &wiring_config_record = &packet_config.first().unwrap();
+                let mut matches = 0;
+                for possible_channel in &packet_config{
+                    if channel == possible_channel.CH{
+                        channel_config = possible_channel;
+                        matches += 1;
+                    }
+                }
+                if matches == 1 {
+                    let detector_id = (event_pulse_height / (4096 / channel_config.Mantid_Detector_ID_Lenght)) + channel_config.Mantid_DetectorID_Start;
+                    let event_tof = u32::from_str_radix(&event_hex[2..8], 16).unwrap();
+
+                    tofs.push(event_tof);
+                    det_ids.push(detector_id);
+                    println!("{event_i} - {event_hex} - TOF: {event_tof} - AdcCH: {channel} - VAL: {event_pulse_height} - DETID: {detector_id}");
+                }
+
+
+            }
+            (tofs, det_ids)
+        },
+        _ => {
+            println!("Unable to PROC -> Unknown stream type in config");
+            (tofs, det_ids)
+        },
+    }
 }
 
 fn process_pc3634m1_events(events_hex: &str, packet_config: &wiring_config_record, events_to_proc: u32)-> (Vec<u32>, Vec<u32>) {
@@ -219,7 +293,7 @@ pub fn header_decoder(header_udp: &str) -> (u32, u32, u16, u16, u64){
     let ppp_in_frame = u16::from_str_radix(&header_udp[60..64], 16).unwrap();
 
     // Get GPS Time
-    let bin_time :&str = &bin_to_hex(&header_udp[24..40]);  // Get data as binary string
+    let bin_time :&str = &hex_to_binary(&header_udp[24..40]);  // Get data as binary string
 
     let years = u16::from_str_radix(&bin_time[0..8], 2).unwrap() + 2000;
     let days = u32::from_str_radix(&bin_time[8..17], 2).unwrap();
@@ -309,7 +383,7 @@ fn hex_to_bool_vec(hex_str: &str) -> Result<Vec<bool>, String> {
     Ok(bool_vec)
 }
 
-fn bin_to_hex(hex: &str) -> String {
+fn hex_to_binary(hex: &str) -> String {
     hex.chars().map(to_binary).collect()
 }
 

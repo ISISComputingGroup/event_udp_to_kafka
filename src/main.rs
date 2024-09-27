@@ -14,7 +14,7 @@ use rdkafka::client::ClientContext;
 use rdkafka::config::{ClientConfig, RDKafkaLogLevel};
 use rdkafka::consumer::stream_consumer::StreamConsumer;
 use rdkafka::consumer::{BaseConsumer, CommitMode, Consumer, ConsumerContext, Rebalance};
-use rdkafka::producer::{FutureProducer, FutureRecord};
+use rdkafka::producer::{DefaultProducerContext, FutureProducer, FutureRecord, ThreadedProducer};
 use rdkafka::error::KafkaResult;
 use rdkafka::message::{Headers, Message};
 use rdkafka::topic_partition_list::TopicPartitionList;
@@ -162,7 +162,7 @@ async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<wiring_config_reco
         .create_with_context(context)
         .expect("Consumer creation failed");
 
-    let producer: &FutureProducer = &ClientConfig::new()
+    let producer: &ThreadedProducer<DefaultProducerContext> = &ClientConfig::new()
         .set("bootstrap.servers", &kafka_broker)
         .set("message.timeout.ms", "5000")
         .create()
@@ -195,56 +195,43 @@ async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<wiring_config_reco
 
                 println!("Num Kafka Messages to Prod: {}", kafka_fbs.len());
 
-                // if kafka_fbs.len() != 0 {
-                //     let futures = kafka_fbs.iter()
-                //         .map(|i| tokio::spawn (async move {
-                //             // The send operation on the topic returns a future, which will be
-                //             // completed once the result or failure from Kafka is received.
-                //             let delivery_status = producer
-                //                 .send::<Vec<u8>, _, _>(
-                //                     FutureRecord::to("POLREF_rustEvents")
-                //                         .payload(i),
-                //                     Duration::from_secs(0),
-                //                 )
-                //                 .await;
-                //
-                //             // This will be executed when the result is received.
-                //             //info!("Delivery status for message {} received", i);
-                //             delivery_status
-                //         }))
-                //         .collect::<Vec<_>>();
+                for flatbuffer in kafka_fbs{
+                    let produce_error = producer.send(
+                        rdkafka::producer::BaseRecord::to(dest_topic_name)
+                            .key("")
+                            .payload(&flatbuffer),
+                        //   Duration::from_secs(0),
+                    );
+                }
 
-                //
-                //
-                //
-                    let futures = kafka_fbs.iter()
-                        .map(|i| async move {
-                            // The send operation on the topic returns a future, which will be
-                            // completed once the result or failure from Kafka is received.
-                            let delivery_status = producer
-                                .send::<Vec<u8>, _, _>(
-                                    FutureRecord::to(dest_topic_name)
-                                        .payload(i),
-                                    //    .key(&format!("Key {}", i)),
-                                    // .headers(OwnedHeaders::new().insert(Header {
-                                    //     key: "header_key",
-                                    //     value: Some("header_value"),
-                                    // })),
-                                    Duration::from_secs(0),
-                                )
-                                .await;
-
-                            // This will be executed when the result is received.
-                            //println!("Delivery status for message - received");
-                            delivery_status
-                        })
-                        .collect::<Vec<_>>();
-
-                    // This loop will wait until all delivery statuses have been received.
-                    for future in futures {
-                        future.await.expect("TODO: panic message");
-                        //println!("Future completed. Result: {:?}", future.await);
-                    }
+                    // let futures = kafka_fbs.iter()
+                    //     .map(|i| async move {
+                    //         // The send operation on the topic returns a future, which will be
+                    //         // completed once the result or failure from Kafka is received.
+                    //         let delivery_status = producer
+                    //             .send::<Vec<u8>, _, _>(
+                    //                 FutureRecord::to(dest_topic_name)
+                    //                     .payload(i),
+                    //                 //    .key(&format!("Key {}", i)),
+                    //                 // .headers(OwnedHeaders::new().insert(Header {
+                    //                 //     key: "header_key",
+                    //                 //     value: Some("header_value"),
+                    //                 // })),
+                    //                 Duration::from_secs(0),
+                    //             )
+                    //             .await;
+                    //
+                    //         // This will be executed when the result is received.
+                    //         //println!("Delivery status for message - received");
+                    //         delivery_status
+                    //     })
+                    //     .collect::<Vec<_>>();
+                    //
+                    // // This loop will wait until all delivery statuses have been received.
+                    // for future in futures {
+                    //     future.await.expect("TODO: panic message");
+                    //     //println!("Future completed. Result: {:?}", future.await);
+                    // }
 
                 let elapsed = now.elapsed();
                 //println!("Elapsed: {:.2?}", elapsed, );
