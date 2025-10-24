@@ -48,7 +48,9 @@ build_release:
 
 
 # Run Clippy linter for code quality checks
-test:clippy:
+test_clippy:
+  needs:
+    - job: build_release
   variables:
     GIT_STRATEGY: clone
     FF_DISABLE_UMASK_FOR_DOCKER_EXECUTOR: "true"
@@ -62,7 +64,9 @@ test:clippy:
   allow_failure: true                                    # Allow linting failures (can be improved over time)
 
 # Check code formatting
-test:format:
+test_format:
+  needs:
+    - job: test_clippy
   variables:
     GIT_STRATEGY: clone
     FF_DISABLE_UMASK_FOR_DOCKER_EXECUTOR: "true"
