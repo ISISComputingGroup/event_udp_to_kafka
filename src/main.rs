@@ -146,6 +146,7 @@ async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<wiring_config_reco
     println!("Do UDP processing");
     println!("{:#?}", cmd_args);
     let kafka_broker = cmd_args.src_kafka_broker;
+    let kafka_broker_dest = cmd_args.dest_kafka_broker;
     let dest_topic_name = cmd_args.dest_kafka_topic.as_str();
 
     let context = CustomContext;
@@ -163,7 +164,7 @@ async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<wiring_config_reco
         .expect("Consumer creation failed");
 
     let producer: &ThreadedProducer<DefaultProducerContext> = &ClientConfig::new()
-        .set("bootstrap.servers", &kafka_broker)
+        .set("bootstrap.servers", &kafka_broker_dest)
         .set("message.timeout.ms", "5000")
         .create()
         .expect("Producer creation error");

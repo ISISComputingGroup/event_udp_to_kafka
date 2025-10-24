@@ -1,4 +1,6 @@
 mod ev42_events_generated;
+mod ev44_events_generated;
+
 use std::io::Bytes;
 use std::u32;
 use serde_json::from_str;
@@ -9,11 +11,12 @@ extern crate flatbuffers;
 
 use flatbuffers::FlatBufferBuilder;
 use ev42_events_generated::{EventMessage, EventMessageArgs, finish_event_message_buffer, root_as_event_message};
+use ev44_events_generated::{Event44Message, Event44MessageArgs, finish_event_44_message_buffer, root_as_event_44_message};
 //use crate::ev42_events_generated::{UInt32ArrayArgs, ValueUnion};
 
 pub fn process_udp_to_kafka<'a>(udp_hex: &'a str, src_ip: &'a str, wiring_config: &'a Vec<wiring_config_record>) -> Vec<Vec<u8>>{
     use std::time::Instant;
-    let now = Instant::now();
+  //  let now = Instant::now();
 
     // make the vector for the product now
     let mut kafka_bytes: Vec<Vec<u8>> = Vec::new();
@@ -40,9 +43,9 @@ pub fn process_udp_to_kafka<'a>(udp_hex: &'a str, src_ip: &'a str, wiring_config
                 _ => println!("Undefined frame type")
             }
         }
-        let elapsed = now.elapsed();
+       // let elapsed = now.elapsed();
         // println!("Elapsed: {:.2?} - bytes: {:?}", elapsed, kafka_bytes);
-        println!("UDP->EV42 Time: {:.2?}", elapsed, );
+       // println!("UDP->EV42 Time: {:.2?}", elapsed, );
         // println!();
 
         kafka_bytes
@@ -119,7 +122,7 @@ fn packet_to_frames(udp_hex: &str) -> (Vec<&str>, Vec<u8>){
 pub fn process_neutron_frame(frame_udp: &str, src_ip: &str, wiring_config: &Vec<wiring_config_record>, ev42_fb_packets: &mut Vec<Vec<u8>>){
     let num_words = frame_udp.len() / 8;
     let exp_events = (num_words - 15) / 2;  // could be less if PCB has added padding Zeros
-    // println!("{src_ip} NeuF - NW {}, NE {}", num_words, exp_events);
+    //println!("{src_ip} NeuF - NW {}, NE {}", num_words, exp_events);
     // println!("{frame_udp}");
 
     //Process Header
@@ -130,7 +133,8 @@ pub fn process_neutron_frame(frame_udp: &str, src_ip: &str, wiring_config: &Vec<
     let mut events_to_proc = events_in_frame;
     if events_to_proc > exp_events as u32 {
         events_to_proc = exp_events as u32;
-        println!("More Events in FHeader than Packet Size - F: {events_in_frame} - P: {exp_events}");
+        println!("Its Been MELON'ED :( - More Events in FHeader than Packet Size - F: {events_in_frame} - P: {exp_events}");
+       // println!(&frame_udp[0..120]);
     }
 
     let mut tofs:Vec<u32> = Vec::new();
@@ -149,20 +153,24 @@ pub fn process_neutron_frame(frame_udp: &str, src_ip: &str, wiring_config: &Vec<
             packet_config_multi.push(line);
         }
     }
-
+    //println!("num matches: {}", num_matches);
     if num_matches >= 1 {   // do we want this for LVDS or have if 1, else if greater than 1?
         match packet_config_single.BRD_Type.as_str() {
             "PC3634M1S" => {(tofs, det_ids) = process_pc3634m1_events(events_only_hex, packet_config_single, events_to_proc); }, //128CH LVDS Card
             "PC3544MS" => {(tofs, det_ids) = process_pc3544ms_events(events_only_hex, packet_config_multi, events_to_proc); },  //MADC PB
+            "PC3877MS" => {(tofs, det_ids) = process_pc3877ms_events(events_only_hex, packet_config_single, events_to_proc); },  // WLSF Streaming Electronics
             _ => {
-                println!("Unable to PROC -> Unknown BRD Type");
+                println!("MELON'ed -> Unable to PROC -> Unknown BRD Type");
             },
         }
 
 
         // println!("Ne-{}", tofs.len());
         let mut fb_bytes: Vec<u8> = Vec::new(); //vector to hold ev42 bytes
-        encode_ev42(&mut bldr, &mut fb_bytes, "rust_proc", 0,frame_time_ns, &tofs, &det_ids);
+        //encode_ev42(&mut bldr, &mut fb_bytes, "rust_proc", 0,frame_time_ns, &tofs, &det_ids);
+
+        // Trying with EV44 Packets
+        encode_ev44(&mut bldr, &mut fb_bytes, "rust_proc", 0,frame_time_ns, &tofs, &det_ids);
         //println!("fb: {:?}", fb_bytes);
         ev42_fb_packets.push(fb_bytes);
 
@@ -267,9 +275,52 @@ fn process_pc3634m1_events(events_hex: &str, packet_config: &wiring_config_recor
             (tofs, det_ids)
         }
         _ => {
-            println!("Unable to PROC -> Unknown stream type in config");
+            println!("MELON'ed -> Unable to PROC -> Unknown stream type in config");
             (tofs, det_ids)
         }
+    }
+}
+
+fn process_pc3877ms_events(events_hex: &str, packet_config: &wiring_config_record, events_to_proc: u32)-> (Vec<u32>, Vec<u32>) {
+    let mut tofs: Vec<u32> = Vec::new();
+    let mut det_ids: Vec<u32> = Vec::new();
+    match packet_config.Packet_Type.as_str() {
+        "Position" => {
+            for event_i in 0..events_to_proc {
+                let addr = (event_i * 16) as usize;
+                let event_hex = &events_hex[addr..addr + 16];
+                let binary_event: &str = &hex_to_binary(event_hex);
+                let event_val = u32::from_str_radix(&binary_event[48..64], 2).unwrap();
+
+                let event_tof = u32::from_str_radix(&event_hex[2..8], 16).unwrap();
+                let det_id = event_val + packet_config.Mantid_DetectorID_Start;
+
+                //println!("pc3877ms - {event_i} - {event_hex} - TOF: {event_tof} - VAL: {event_val} - DETID: {det_id}");
+                tofs.push(event_tof);
+                det_ids.push(det_id);
+            }
+            (tofs, det_ids)
+        },
+        "PulseHeight" => {
+            println!("PulseHeight Packet");
+            for event_i in 0..events_to_proc {
+                let addr = (event_i * 16) as usize;
+                let event_hex = &events_hex[addr..addr + 16];
+                let binary_event: &str = &hex_to_binary(event_hex);
+                let event_val = u32::from_str_radix(&binary_event[36..48], 2).unwrap();
+
+                let event_tof = u32::from_str_radix(&event_hex[2..8], 16).unwrap();
+                let det_id = event_val + packet_config.Mantid_DetectorID_Start;
+
+                tofs.push(event_tof);
+                det_ids.push(det_id);
+            }
+            (tofs, det_ids)
+        },
+        _ => {
+            println!("MELON'ed -> Unable to PROC -> Unknown stream type in config");
+            (tofs, det_ids)
+        },
     }
 }
 
@@ -304,8 +355,27 @@ pub fn header_decoder(header_udp: &str) -> (u32, u32, u16, u16, u64){
     let u_secs = u16::from_str_radix(&bin_time[44..54], 2).unwrap();
     let n_secs = u64::from_str_radix(&bin_time[54..64], 2).unwrap();
 
-    let datetime_again: DateTime<Utc> = DateTime::from_utc(NaiveDateTime::from(NaiveDate::from_yo_opt(years as i32, days).unwrap()), Utc);
-    let years_days_as_ns = datetime_again.timestamp() as u64 * 1e9 as u64;
+   // println!("F: {} - E: {} - PER: {} - PPP: {}", frame_number, events_in_frame, period_num, ppp_in_frame);
+   // println!("time: Y-{years}:D-{days}:H-{hours}:M-{mins}:S-{secs}:mS-{m_secs}:uS-{u_secs}:nS-{n_secs}");
+    // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+    // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+    // Need to add code to handle days = zero
+    // Currently this will cause the program to crash as it cannot convert the year + days to nS since epoch
+    // could just add a if statement for this
+    // probably better to read docs for from_yo_opt to see why
+    // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+    // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+    let mut years_days_as_ns:u64 = 0;
+    if days != 0{
+        // check if days if valid, if its zero the packet likely doesn't have a valid GPS timesource
+        let datetime_again: DateTime<Utc> = DateTime::from_utc(NaiveDateTime::from(NaiveDate::from_yo_opt(years as i32, days).unwrap()), Utc);
+        years_days_as_ns = datetime_again.timestamp() as u64 * 1e9 as u64;
+    }
+    else{
+        println!("MELON'ed - invalid days, set years/day to zero");
+    }
+    
+    
 
     let hours_as_ns = hours as u64 * 3.6e12 as u64;
     let mins_as_ns = mins as u64 * 6e10 as u64;
@@ -316,7 +386,8 @@ pub fn header_decoder(header_udp: &str) -> (u32, u32, u16, u16, u64){
     let total_ns: u64 = n_secs + u_secs_as_ns + m_secs_as_ns + secs_as_ns + mins_as_ns + hours_as_ns + years_days_as_ns;
 
     //println!("F: {} - E: {} - PER: {} - PPP: {} - TnS: {}", frame_number, events_in_frame, period_num, ppp_in_frame, total_ns);
-    //println!("time: Y-{years}:D-{days}:H-{hours}:M-{mins}:S-{secs}:mS-{m_secs}:uS-{u_secs}:nS-{n_secs}");
+
+    
     // println!("time nS: {}", total_ns);
     (events_in_frame, frame_number, period_num, ppp_in_frame, total_ns)
 }
@@ -354,6 +425,41 @@ fn encode_ev42(bldr: &mut FlatBufferBuilder, dest: &mut Vec<u8>, source_name: &s
 
     let ev42_offset = EventMessage::create(bldr, &args);
     finish_event_message_buffer(bldr, ev42_offset);
+    let finished_data = bldr.finished_data();
+    dest.extend_from_slice(finished_data);
+}
+
+fn encode_ev44(bldr: &mut FlatBufferBuilder, dest: &mut Vec<u8>, source_name: &str, message_id: u64, pulse_time: u64, tofs: &Vec<u32>, det_ids: &Vec<u32>) {
+    dest.clear();
+    bldr.reset();
+
+    let mut reference_time: Vec<i64> = Vec::new();
+    reference_time.push(pulse_time as i64);
+
+    let mut reference_time_index: Vec<i32> = Vec::new();
+    reference_time_index.push(0);
+
+    let mut tofs_i32: Vec<i32> = Vec::new();
+    for tof in tofs{
+        tofs_i32.push(*tof as i32);
+    }
+
+    let mut det_ids_i32: Vec<i32> = Vec::new();
+    for det_id in det_ids{
+        det_ids_i32.push(*det_id as i32);
+    }
+
+    let args = Event44MessageArgs{
+        source_name: Option::from(bldr.create_string("DAE_Streamed_RustProc")),
+        message_id: message_id as i64,
+        reference_time: Option::from(bldr.create_vector(&reference_time)),
+        reference_time_index: Option::from(bldr.create_vector(&reference_time_index)),
+        time_of_flight: Option::from(bldr.create_vector(&tofs_i32)),
+        pixel_id: Option::from(bldr.create_vector(&det_ids_i32)),
+    };
+
+    let ev44_offset = Event44Message::create(bldr, &args);
+    finish_event_44_message_buffer(bldr, ev44_offset);
     let finished_data = bldr.finished_data();
     dest.extend_from_slice(finished_data);
 }

@@ -1,0 +1,2 @@
+BRD_NUM,BRD_Ref,BRD_Type,Packet_Type,SW_Pos,StreamingIP,CH,Mantid_DetectorID_Start,Mantid_Detector_ID_Lenght,Comment
+0,WLSF0,PC3877MS,Position,0,192.168.1.3,0,0,1,WLSF Module
