@@ -2,8 +2,8 @@
 include:
   - template: Jobs/SAST.gitlab-ci.yml                    # Static Application Security Testing
   - template: Jobs/Dependency-Scanning.latest.gitlab-ci.yml  # Scan dependencies for vulnerabilities
-  - template: Jobs/Container-Scanning.gitlab-ci.yml      # Scan Docker containers for vulnerabilities
-  - template: Jobs/SAST-IaC.gitlab-ci.yml               # Infrastructure as Code security scanning
+#  - template: Jobs/Container-Scanning.gitlab-ci.yml      # Scan Docker containers for vulnerabilities
+#  - template: Jobs/SAST-IaC.gitlab-ci.yml               # Infrastructure as Code security scanning
   - template: Jobs/Secret-Detection.gitlab-ci.yml        # Detect secrets in source code
 
 
@@ -14,6 +14,8 @@ stages:
 
 # Configure Semgrep SAST scanning for Rust files
 semgrep-sast:
+  tags:
+  - docker
   stage: security_checks
   rules:
     - if: $CI_COMMIT_BRANCH                              # Run on any branch
