@@ -31,6 +31,6 @@ LABEL authors="Gitlab CI Build"
 
 
 ADD /target/release/* ./
-RUN apk update && apk add openssl ca-certificates
+#RUN apk update && apk add openssl ca-certificates
 RUN ls
 CMD ["./rust-data-stream-processor"]
