@@ -1,5 +1,6 @@
 stages:
   - build
+  - test
 
 build_debug:
   stage: build
@@ -44,3 +45,22 @@ build_release:
       - target/release/rust-data-stream-processor
     reports: # export the environment statement so we can access it in the release stage
       dotenv: CI_JOB_ID.env
+
+
+# Run Clippy linter for code quality checks
+test:clippy:
+  extends: .rust-template                                # Use Rust template configuration
+  stage: test                                            # Execute during test stage
+  script:
+    - rustup component add clippy                        # Install Clippy linter
+    - cargo clippy -- -D warnings                       # Run Clippy and treat warnings as errors
+  allow_failure: true                                    # Allow linting failures (can be improved over time)
+
+# Check code formatting
+test:format:
+  extends: .rust-template                                # Use Rust template configuration
+  stage: test                                            # Execute during test stage
+  script:
+    - rustup component add rustfmt                       # Install Rust formatter
+    - cargo fmt -- --check                              # Check if code is properly formatted
+  allow_failure: true                                    # Allow formatting failures (can be improved over time)
