@@ -3,7 +3,7 @@ FROM rust:alpine as builder
 WORKDIR /app/src
 RUN USER=root
 
-RUN apk add pkgconfig openssl-dev libc-dev
+RUN apk update && apk add pkgconfig openssl-dev libc-dev openssl alpine-sdk
 COPY ./ ./
 RUN cargo build --release
 
