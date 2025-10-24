@@ -112,6 +112,6 @@ docker_build_release:
   stage: docker_build
   script:
     - whoami
-    - sudo docker ps
+    - docker ps
     - docker build -t rust_data_processor:$CI_COMMIT_SHORT_SHA .
     - docker tag rust_data_processor:$CI_COMMIT_SHORT_SHA rust_data_processor:latest
