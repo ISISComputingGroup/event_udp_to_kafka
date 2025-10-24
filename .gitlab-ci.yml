@@ -11,6 +11,7 @@ stages:
   - security_checks
   - build
   - test
+  - docker_build
 
 # Configure Semgrep SAST scanning for Rust files
 semgrep-sast:
@@ -101,3 +102,14 @@ test_format:
     - rustup component add rustfmt                       # Install Rust formatter
     - cargo fmt -- --check                              # Check if code is properly formatted
   allow_failure: true                                    # Allow formatting failures (can be improved over time)
+
+docker_build_release:
+  needs:
+    - job: build_release
+    - job: test_format
+  tags:
+    - te7grebe_non_sudo
+  stage: docker_build
+  script:
+    - docker build -t rust_data_processor:$CI_COMMIT_SHORT_SHA
+    - docker tag rust_data_processor:$CI_COMMIT_SHORT_SHA rust_data_processor:latest
