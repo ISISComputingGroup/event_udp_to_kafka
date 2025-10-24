@@ -11,21 +11,34 @@ build_release:
     - te7grebe_non_sudo
   before_script:
     - whoami
-    #- export SCRIPT_DIR=/pack_esdg/scripts-stable
-    #- echo ${SCRIPT_DIR}/scripts/bash/esdg.bash
-    #- source ${SCRIPT_DIR}/scripts/bash/esdg.bash
-    - echo ${LM_LICENSE_FILE}
-    #- chmod u+r+x scripts/build_fpga.sh
-#    - yum install openssl openssl-devel -y
   script:
     - echo "Build Release start - make env file with CI_JOB_ID for release step"
     - echo BUILD_JOB_ID=$CI_JOB_ID >> CI_JOB_ID.env
     - cargo build --release
     - ls
   artifacts:
-#    paths:
-#      - demoProject/SerialiseFWTest.runs/impl_1/*.bit
-#      - demoProject/SerialiseFWTest.runs/impl_1/*.ltx
-#      - utilisation.csv
+    paths:
+      - target/release/*
+    reports: # export the environment statement so we can access it in the release stage
+      dotenv: CI_JOB_ID.env
+
+build_debug:
+  stage: build
+  variables:
+    GIT_STRATEGY: clone
+    FF_DISABLE_UMASK_FOR_DOCKER_EXECUTOR: "true"
+    GIT_SUBMODULE_STRATEGY: recursive
+  tags:
+    - te7grebe_non_sudo
+  before_script:
+    - whoami
+  script:
+    - echo "Build Release start - make env file with CI_JOB_ID for release step"
+    - echo BUILD_JOB_ID=$CI_JOB_ID >> CI_JOB_ID.env
+    - cargo build
+    - ls
+  artifacts:
+    paths:
+      - target/debug/*
     reports: # export the environment statement so we can access it in the release stage
       dotenv: CI_JOB_ID.env
