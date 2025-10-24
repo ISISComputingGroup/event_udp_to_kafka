@@ -16,6 +16,7 @@ build_release:
     #- source ${SCRIPT_DIR}/scripts/bash/esdg.bash
     - echo ${LM_LICENSE_FILE}
     #- chmod u+r+x scripts/build_fpga.sh
+#    - yum install openssl openssl-devel -y
   script:
     - echo "Build Release start - make env file with CI_JOB_ID for release step"
     - echo BUILD_JOB_ID=$CI_JOB_ID >> CI_JOB_ID.env
