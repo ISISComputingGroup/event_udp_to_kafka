@@ -19,7 +19,7 @@
 
 
 
-FROM rockylinux:slim
+FROM rockylinux:9-minimal
 LABEL authors="Gitlab CI Build"
 
 #ADD /target/release/rust-data-stream-processor /
