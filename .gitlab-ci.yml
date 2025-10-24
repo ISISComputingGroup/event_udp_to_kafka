@@ -18,7 +18,7 @@ build_debug:
     - ls
   artifacts:
     paths:
-      - target/debug/*
+      - target/debug/rust-data-stream-processor
     reports: # export the environment statement so we can access it in the release stage
       dotenv: CI_JOB_ID.env
 
@@ -41,6 +41,6 @@ build_release:
     - ls
   artifacts:
     paths:
-      - target/release/*
+      - target/release/rust-data-stream-processor
     reports: # export the environment statement so we can access it in the release stage
       dotenv: CI_JOB_ID.env
