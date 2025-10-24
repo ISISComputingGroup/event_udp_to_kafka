@@ -111,5 +111,7 @@ docker_build_release:
     - te7grebe_non_sudo
   stage: docker_build
   script:
+    - whoami
+    - docker ps
     - docker build -t rust_data_processor:$CI_COMMIT_SHORT_SHA .
     - docker tag rust_data_processor:$CI_COMMIT_SHORT_SHA rust_data_processor:latest
