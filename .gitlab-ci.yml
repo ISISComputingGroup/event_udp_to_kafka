@@ -49,7 +49,12 @@ build_release:
 
 # Run Clippy linter for code quality checks
 test:clippy:
-  extends: .rust-template                                # Use Rust template configuration
+  variables:
+    GIT_STRATEGY: clone
+    FF_DISABLE_UMASK_FOR_DOCKER_EXECUTOR: "true"
+    GIT_SUBMODULE_STRATEGY: recursive
+  tags:
+    - te7grebe_non_sudo
   stage: test                                            # Execute during test stage
   script:
     - rustup component add clippy                        # Install Clippy linter
@@ -58,7 +63,12 @@ test:clippy:
 
 # Check code formatting
 test:format:
-  extends: .rust-template                                # Use Rust template configuration
+  variables:
+    GIT_STRATEGY: clone
+    FF_DISABLE_UMASK_FOR_DOCKER_EXECUTOR: "true"
+    GIT_SUBMODULE_STRATEGY: recursive
+  tags:
+    - te7grebe_non_sudo
   stage: test                                            # Execute during test stage
   script:
     - rustup component add rustfmt                       # Install Rust formatter
