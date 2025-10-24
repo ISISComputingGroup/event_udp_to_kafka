@@ -1,27 +1,6 @@
 stages:
   - build
 
-build_release:
-  stage: build
-  variables:
-    GIT_STRATEGY: clone
-    FF_DISABLE_UMASK_FOR_DOCKER_EXECUTOR: "true"
-    GIT_SUBMODULE_STRATEGY: recursive
-  tags:
-    - te7grebe_non_sudo
-  before_script:
-    - whoami
-  script:
-    - echo "Build Release start - make env file with CI_JOB_ID for release step"
-    - echo BUILD_JOB_ID=$CI_JOB_ID >> CI_JOB_ID.env
-    - cargo build --release
-    - ls
-  artifacts:
-    paths:
-      - target/release/*
-    reports: # export the environment statement so we can access it in the release stage
-      dotenv: CI_JOB_ID.env
-
 build_debug:
   stage: build
   variables:
@@ -40,5 +19,28 @@ build_debug:
   artifacts:
     paths:
       - target/debug/*
+    reports: # export the environment statement so we can access it in the release stage
+      dotenv: CI_JOB_ID.env
+
+build_release:
+  stage: build
+  needs:
+    - job: build_debug
+  variables:
+    GIT_STRATEGY: clone
+    FF_DISABLE_UMASK_FOR_DOCKER_EXECUTOR: "true"
+    GIT_SUBMODULE_STRATEGY: recursive
+  tags:
+    - te7grebe_non_sudo
+  before_script:
+    - whoami
+  script:
+    - echo "Build Release start - make env file with CI_JOB_ID for release step"
+    - echo BUILD_JOB_ID=$CI_JOB_ID >> CI_JOB_ID.env
+    - cargo build --release
+    - ls
+  artifacts:
+    paths:
+      - target/release/*
     reports: # export the environment statement so we can access it in the release stage
       dotenv: CI_JOB_ID.env
