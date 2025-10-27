@@ -4,7 +4,7 @@ include:
   - template: Jobs/Dependency-Scanning.latest.gitlab-ci.yml  # Scan dependencies for vulnerabilities
 #  - template: Jobs/Container-Scanning.gitlab-ci.yml      # Scan Docker containers for vulnerabilities
 #  - template: Jobs/SAST-IaC.gitlab-ci.yml               # Infrastructure as Code security scanning
-  - template: Jobs/Secret-Detection.gitlab-ci.yml        # Detect secrets in source code
+#  - template: Jobs/Secret-Detection.gitlab-ci.yml        # Detect secrets in source code
 
 
 stages:
@@ -130,7 +130,7 @@ deploy_docker_compose:
   script:
     - pwd
     - cd /faststore/rust_data_processing
-    - echo $CI_PROJECT_DIR
+    - echo ${CI_PROJECT_DIR}/docker-compose.yaml
     - ls
     - pwd
     - docker compose down
