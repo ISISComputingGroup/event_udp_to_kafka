@@ -131,5 +131,8 @@ deploy_docker_compose:
     - pwd
     - cd /faststore/
     - pwd
-    - cd /rust_data_processing
+    - ls
+    - cd /rust_data_processing/
     - pwd
+    - docker compose down
+    - docker compose up -d
