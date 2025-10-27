@@ -12,6 +12,7 @@ stages:
   - build
   - test
   - docker_build
+  - deploy
 
 ## Configure Semgrep SAST scanning for Rust files
 semgrep-sast:
@@ -115,3 +116,20 @@ docker_build_release:
     - docker ps
     - docker build -t rust_data_processor:$CI_COMMIT_SHORT_SHA .
     - docker tag rust_data_processor:$CI_COMMIT_SHORT_SHA rust_data_processor:latest
+
+deploy_docker_compose:
+  needs:
+    - job: docker_build_release
+  variables:
+    GIT_STRATEGY: clone
+    FF_DISABLE_UMASK_FOR_DOCKER_EXECUTOR: "true"
+    GIT_SUBMODULE_STRATEGY: recursive
+  tags:
+    - te7grebe_non_sudo
+  stage: deploy
+  script:
+    - pwd
+    - cd /faststore/
+    - pwd
+    - cd /rust_data_processing
+    - pwd
