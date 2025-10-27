@@ -129,10 +129,10 @@ deploy_docker_compose:
   stage: deploy
   script:
     - pwd
+    - ls -l
     - cd /faststore/rust_data_processing
     - docker compose down
     - rm -f docker-compose.yaml
-    - cp ${CI_PROJECT_DIR}/docker-compose.yaml /
     - echo ${CI_PROJECT_DIR}/docker-compose.yaml
     - ls
     - pwd
