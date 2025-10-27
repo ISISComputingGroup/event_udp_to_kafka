@@ -1,0 +1,117 @@
+# Include GitLab's security scanning templates for DevSecOps
+include:
+  - template: Jobs/SAST.gitlab-ci.yml                    # Static Application Security Testing
+  - template: Jobs/Dependency-Scanning.latest.gitlab-ci.yml  # Scan dependencies for vulnerabilities
+#  - template: Jobs/Container-Scanning.gitlab-ci.yml      # Scan Docker containers for vulnerabilities
+#  - template: Jobs/SAST-IaC.gitlab-ci.yml               # Infrastructure as Code security scanning
+  - template: Jobs/Secret-Detection.gitlab-ci.yml        # Detect secrets in source code
+
+
+stages:
+  - security_checks
+  - build
+  - test
+  - docker_build
+
+## Configure Semgrep SAST scanning for Rust files
+semgrep-sast:
+  tags:
+  - docker
+  stage: security_checks
+  rules:
+    - if: $CI_COMMIT_BRANCH                              # Run on any branch
+      exists:
+        - "**/*.rs"                                      # Only if Rust files exist
+  variables:
+    SAST_EXCLUDED_PATHS: ".cargo/**"                     # Exclude Cargo cache from scanning
+
+
+build_debug:
+  stage: build
+  variables:
+    GIT_STRATEGY: clone
+    FF_DISABLE_UMASK_FOR_DOCKER_EXECUTOR: "true"
+    GIT_SUBMODULE_STRATEGY: recursive
+  tags:
+    - te7grebe_non_sudo
+  before_script:
+    - whoami
+  script:
+    - echo "Build Release start - make env file with CI_JOB_ID for release step"
+    - echo BUILD_JOB_ID=$CI_JOB_ID >> CI_JOB_ID.env
+    - cargo build
+    - ls
+  artifacts:
+    paths:
+      - target/debug/rust-data-stream-processor
+    reports: # export the environment statement so we can access it in the release stage
+      dotenv: CI_JOB_ID.env
+
+build_release:
+  stage: build
+  needs:
+    - job: build_debug
+  variables:
+    GIT_STRATEGY: clone
+    FF_DISABLE_UMASK_FOR_DOCKER_EXECUTOR: "true"
+    GIT_SUBMODULE_STRATEGY: recursive
+  tags:
+    - te7grebe_non_sudo
+  before_script:
+    - whoami
+  script:
+    - echo "Build Release start - make env file with CI_JOB_ID for release step"
+    - echo BUILD_JOB_ID=$CI_JOB_ID >> CI_JOB_ID.env
+    - cargo build --release
+    - ls
+  artifacts:
+    paths:
+      - target/release/rust-data-stream-processor
+    reports: # export the environment statement so we can access it in the release stage
+      dotenv: CI_JOB_ID.env
+
+
+# Run Clippy linter for code quality checks
+test_clippy:
+  needs:
+    - job: build_release
+  variables:
+    GIT_STRATEGY: clone
+    FF_DISABLE_UMASK_FOR_DOCKER_EXECUTOR: "true"
+    GIT_SUBMODULE_STRATEGY: recursive
+  tags:
+    - te7grebe_non_sudo
+  stage: test                                            # Execute during test stage
+  script:
+    - rustup component add clippy                        # Install Clippy linter
+    - cargo clippy -- -D warnings                       # Run Clippy and treat warnings as errors
+  allow_failure: true                                    # Allow linting failures (can be improved over time)
+
+# Check code formatting
+test_format:
+  needs:
+    - job: test_clippy
+  variables:
+    GIT_STRATEGY: clone
+    FF_DISABLE_UMASK_FOR_DOCKER_EXECUTOR: "true"
+    GIT_SUBMODULE_STRATEGY: recursive
+  tags:
+    - te7grebe_non_sudo
+  stage: test                                            # Execute during test stage
+  script:
+    - rustup component add rustfmt                       # Install Rust formatter
+    - cargo fmt -- --check                              # Check if code is properly formatted
+  allow_failure: true                                    # Allow formatting failures (can be improved over time)
+
+docker_build_release:
+  needs:
+    - job: build_release
+    - job: test_format
+  tags:
+    - te7grebe_non_sudo
+  stage: docker_build
+  script:
+    - whoami
+    - docker ps
+    - docker build -t rust_data_processor:$CI_COMMIT_SHORT_SHA .
+    - docker tag rust_data_processor:$CI_COMMIT_SHORT_SHA rust_data_processor:latest
