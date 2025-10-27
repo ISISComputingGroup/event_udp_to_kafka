@@ -129,7 +129,7 @@ deploy_docker_compose:
   stage: deploy
   script:
     - pwd
-    - cd /faststore/
+    - cd /faststore/rust_data_processing
     - pwd
     - ls
     - cd /rust_data_processing/
