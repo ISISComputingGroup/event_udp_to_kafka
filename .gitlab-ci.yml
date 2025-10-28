@@ -126,7 +126,7 @@ docker_build_release:
 # same as release but doesn't tag as latest
 docker_build_non_release:
   needs:
-    - job: test_format
+#    - job: test_format
     - job: build_release
   tags:
     - te7grebe_non_sudo
