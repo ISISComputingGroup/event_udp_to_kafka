@@ -38,7 +38,10 @@ pub fn process_udp_to_kafka<'a>(udp_hex: &'a str, src_ip: &'a str, wiring_config
                     //println!("PROC For Neutron Frame Header - {:?}", frames_udp[frame_i]);
                     process_neutron_frame(frames_udp[frame_i], src_ip, wiring_config, &mut kafka_bytes);
                 },
-                2 => println!("PROC For Veto Frame Header"),
+                2 => {
+                    // println!("PROC For Veto Frame Header")
+                    process_neutron_frame(frames_udp[frame_i], src_ip, wiring_config, &mut kafka_bytes);
+                },
                 3 => println!("PROC For SE Frame Header"),
                 _ => println!("Undefined frame type")
             }
