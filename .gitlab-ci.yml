@@ -106,10 +106,24 @@ test_format:
     - cargo fmt -- --check                              # Check if code is properly formatted
   allow_failure: true                                    # Allow formatting failures (can be improved over time)
 
-docker_build_release:
+
+
+# same as release but doesn't tag as latest
+docker_build:
   needs:
-    - job: build_release
     - job: test_format
+    - job: build_release
+  tags:
+    - te7grebe_non_sudo
+  stage: docker_build
+  script:
+    - whoami
+    - docker ps
+    - docker build -t rust_data_processor:$CI_COMMIT_SHORT_SHA .
+
+docker_build_tag_release:
+  needs:
+    - job: docker_build
   tags:
     - te7grebe_non_sudo
   stage: docker_build
@@ -120,30 +134,12 @@ docker_build_release:
   script:
     - whoami
     - ls
-    - docker build -t rust_data_processor:$CI_COMMIT_SHORT_SHA .
     - docker tag rust_data_processor:$CI_COMMIT_SHORT_SHA rust_data_processor:latest
-
-# same as release but doesn't tag as latest
-docker_build_non_release:
-  needs:
-#    - job: test_format
-    - job: build_release
-  tags:
-    - te7grebe_non_sudo
-  stage: docker_build
-  rules:
-    - if: $CI_COMMIT_TAG
-      when: never                                  # Do not run this job when a tag is created manually
-    - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH  # Run this job when commits are pushed or merged to the default branch
-  script:
-    - whoami
-    - docker ps
-    - docker build -t rust_data_processor:$CI_COMMIT_SHORT_SHA .
 
 
 deploy_docker_compose:
   needs:
-    - job: docker_build_release
+    - job: docker_build_tag_release
   variables:
     GIT_STRATEGY: clone
     FF_DISABLE_UMASK_FOR_DOCKER_EXECUTOR: "true"
