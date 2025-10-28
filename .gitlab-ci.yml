@@ -12,6 +12,7 @@ stages:
   - build
   - test
   - docker_build
+  - deploy
 
 ## Configure Semgrep SAST scanning for Rust files
 semgrep-sast:
@@ -46,6 +47,8 @@ build_debug:
       - target/debug/rust-data-stream-processor
     reports: # export the environment statement so we can access it in the release stage
       dotenv: CI_JOB_ID.env
+
+
 
 build_release:
   stage: build
@@ -103,10 +106,13 @@ test_format:
     - cargo fmt -- --check                              # Check if code is properly formatted
   allow_failure: true                                    # Allow formatting failures (can be improved over time)
 
-docker_build_release:
+
+
+# same as release but doesn't tag as latest
+docker_build:
   needs:
-    - job: build_release
     - job: test_format
+    - job: build_release
   tags:
     - te7grebe_non_sudo
   stage: docker_build
@@ -114,4 +120,45 @@ docker_build_release:
     - whoami
     - docker ps
     - docker build -t rust_data_processor:$CI_COMMIT_SHORT_SHA .
+
+docker_build_tag_release:
+  needs:
+    - job: docker_build
+  tags:
+    - te7grebe_non_sudo
+  stage: docker_build
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never                                  # Do not run this job when a tag is created manually
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH  # Run this job when commits are pushed or merged to the default branch
+  script:
+    - whoami
+    - ls
     - docker tag rust_data_processor:$CI_COMMIT_SHORT_SHA rust_data_processor:latest
+
+
+deploy_docker_compose:
+  needs:
+    - job: docker_build_tag_release
+  variables:
+    GIT_STRATEGY: clone
+    FF_DISABLE_UMASK_FOR_DOCKER_EXECUTOR: "true"
+    GIT_SUBMODULE_STRATEGY: recursive
+  tags:
+    - te7grebe_non_sudo
+  stage: deploy
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never                                  # Do not run this job when a tag is created manually
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH  # Run this job when commits are pushed or merged to the default branch
+  script:
+    - pwd
+    - ls -l
+    - cd /faststore/rust_data_processing
+    - docker compose down || true # add true to the end to continue running even if unable to stop, docker might not be running the compose
+    - rm -f docker-compose.yaml
+    - cp -f ${CI_PROJECT_DIR}/docker-compose.yaml .
+    - echo ${CI_PROJECT_DIR}/docker-compose.yaml
+    - ls
+    - pwd
+    - docker compose up -d
