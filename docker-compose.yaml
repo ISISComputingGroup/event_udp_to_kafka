@@ -3,7 +3,7 @@ version: '3'
 services:
   rust_data_processor_EMMA_Livedata:
     image: rust_data_processor:latest
-    command: "./rust-data-stream-processor --src-kafka-topic EMMA-RawUDP -w /config/wiring_EMMA.csv -d EMMA_rustEvents -g rust_data_processor_EMMA_Livedata --dest_kafka_broker livedata.isis.cclrc.ac.uk:31092"
+    command: "./rust-data-stream-processor --src-kafka-topic EMMA-RawUDP -w /config/wiring_EMMA.csv -d EMMA_rustEvents -g rust_data_processor_EMMA_Livedata --dest-kafka-broker livedata.isis.cclrc.ac.uk:31092"
     deploy:
       mode: replicated
       replicas: 1
@@ -17,7 +17,7 @@ services:
 
   rust_data_processor_POLREF_Livedata:
     image: rust_data_processor:latest
-    command: "./rust-data-stream-processor --src-kafka-topic TS2_POLREF_RawUDP -w /config/wiring_polref.csv -d POLREF_Events -g rust_data_processor_POLREF_Livedata --dest_kafka_broker livedata.isis.cclrc.ac.uk:31092"
+    command: "./rust-data-stream-processor --src-kafka-topic TS2_POLREF_RawUDP -w /config/wiring_polref.csv -d POLREF_Events -g rust_data_processor_POLREF_Livedata --dest-kafka-broker livedata.isis.cclrc.ac.uk:31092"
     deploy:
       mode: replicated
       replicas: 1
