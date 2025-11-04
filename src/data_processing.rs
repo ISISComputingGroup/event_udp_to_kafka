@@ -33,6 +33,7 @@ pub fn process_udp_to_kafka<'a>(udp_hex: &'a str, src_ip: &'a str, wiring_config
         // println!("NFilt: {} - Types: {:?}", frames_udp.len(), frames_types);
         //println!("UDP data: {:?}", frames_udp);
         for frame_i in 0..frames_udp.len() {
+            // println!("processing frame: {frame_i}");
             match frames_types[frame_i] {
                 1 => {
                     //println!("PROC For Neutron Frame Header - {:?}", frames_udp[frame_i]);
@@ -99,18 +100,18 @@ fn packet_to_frames(udp_hex: &str) -> (Vec<&str>, Vec<u8>){
     // multiple frames found, append each to the vec
     else {
         for i in (0..frame_index.len()).rev(){  // Do this backwards as removing Vec entries
-            if i == frame_index.len()-1{
+            if i == frame_index.len()-1{    // if data is the last frame found in the dataset
                 let hex = &udp_hex[(frame_index[i] * 8) as usize..udp_hex.len()];
-                if hex.len() >= 128{    //Size checking here to see if its worth adding to the list of frames
+                if hex.len() >= 128{    // Check the frame is larger than a frame header
                     frame_bytes.push(hex);
                 }
                 else{
                     frame_types.remove(i);
                 }
             }
-            else{
+            else{   // for all other frames
                 let hex = &udp_hex[(frame_index[i] * 8) as usize..(frame_index[i+1] * 8) as usize];
-                if hex.len() >= 128{    //Size checking here to see if its worth adding to the list of frames
+                if hex.len() >= 128{    // Check the frame is larger than a frame header
                     frame_bytes.push(hex);
                 }
                 else{
@@ -118,6 +119,7 @@ fn packet_to_frames(udp_hex: &str) -> (Vec<&str>, Vec<u8>){
                 }
             }
         }
+        frame_bytes.reverse(); // reverse the bytes vector as they were added in reverse
         (frame_bytes, frame_types)
     }
 }
@@ -159,13 +161,16 @@ pub fn process_neutron_frame(frame_udp: &str, src_ip: &str, wiring_config: &Vec<
     //println!("num matches: {}", num_matches);
     if num_matches >= 1 {   // do we want this for LVDS or have if 1, else if greater than 1?
         match packet_config_single.BRD_Type.as_str() {
-            "PC3634M1S" => {(tofs, det_ids) = process_pc3634m1_events(events_only_hex, packet_config_single, events_to_proc); }, //128CH LVDS Card
-            "PC3544MS" => {(tofs, det_ids) = process_pc3544ms_events(events_only_hex, packet_config_multi, events_to_proc); },  //MADC PB
-            "PC3877MS" => {(tofs, det_ids) = process_pc3877ms_events(events_only_hex, packet_config_single, events_to_proc); },  // WLSF Streaming Electronics
+            "PC3634M1S" => {(tofs, det_ids) = process_pc3634m1_events(events_only_hex, packet_config_single, events_to_proc); },    // 128CH LVDS Card
+            "PC3544MS" => {(tofs, det_ids) = process_pc3544ms_events(events_only_hex, packet_config_multi, events_to_proc); },      // MADC PB
+            "PC3877MS" => {(tofs, det_ids) = process_pc3877ms_events(events_only_hex, packet_config_single, events_to_proc); },     // WLSF Streaming Electronics
             _ => {
                 println!("MELON'ed -> Unable to PROC -> Unknown BRD Type");
             },
         }
+
+        // println!("Dets: {:?}", det_ids);
+        // println!("TOFs: {:?}", tofs);
 
 
         // println!("Ne-{}", tofs.len());
