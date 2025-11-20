@@ -168,20 +168,22 @@ pub fn process_neutron_frame(frame_udp: &str, src_ip: &str, wiring_config: &Vec<
                 println!("MELON'ed -> Unable to PROC -> Unknown BRD Type");
             },
         }
-
         // println!("Dets: {:?}", det_ids);
         // println!("TOFs: {:?}", tofs);
 
+        if tofs.len() == 0{
+            println!("MELON'ed -> no Events found within frame");
+        }
+        else{
+            // println!("Ne-{}", tofs.len());
+            let mut fb_bytes: Vec<u8> = Vec::new(); //vector to hold ev42 bytes
+            //encode_ev42(&mut bldr, &mut fb_bytes, "rust_proc", 0,frame_time_ns, &tofs, &det_ids);
 
-        // println!("Ne-{}", tofs.len());
-        let mut fb_bytes: Vec<u8> = Vec::new(); //vector to hold ev42 bytes
-        //encode_ev42(&mut bldr, &mut fb_bytes, "rust_proc", 0,frame_time_ns, &tofs, &det_ids);
-
-        // Trying with EV44 Packets
-        encode_ev44(&mut bldr, &mut fb_bytes, "rust_proc", 0,frame_time_ns, &tofs, &det_ids);
-        //println!("fb: {:?}", fb_bytes);
-        ev42_fb_packets.push(fb_bytes);
-
+            // Trying with EV44 Packets
+            encode_ev44(&mut bldr, &mut fb_bytes, "rust_proc", 0,frame_time_ns, &tofs, &det_ids);
+            //println!("fb: {:?}", fb_bytes);
+            ev42_fb_packets.push(fb_bytes);
+        }
     }
     else {
         return;
