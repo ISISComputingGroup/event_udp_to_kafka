@@ -302,7 +302,7 @@ fn process_pc3877ms_events(events_hex: &str, packet_config: &wiring_config_recor
                 let binary_event: &str = &hex_to_binary(event_hex);
                 let event_val = u32::from_str_radix(&binary_event[48..64], 2).unwrap();
 
-                let event_tof = u32::from_str_radix(&event_hex[2..8], 16).unwrap();
+                let event_tof = u32::from_str_radix(&event_hex[2..8], 16).unwrap() * 20;
                 let det_id = event_val + packet_config.Mantid_DetectorID_Start;
 
                 //println!("pc3877ms - {event_i} - {event_hex} - TOF: {event_tof} - VAL: {event_val} - DETID: {det_id}");
