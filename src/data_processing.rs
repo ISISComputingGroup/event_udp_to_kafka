@@ -251,7 +251,9 @@ fn process_pc3544ms_events(
 
                     tofs.push(event_tof);
                     det_ids.push(detector_id);
-                    trace!("{event_i} - {event_hex} - TOF: {event_tof} - AdcCH: {channel} - VAL: {event_position} - DETID: {detector_id}");
+                    trace!(
+                        "{event_i} - {event_hex} - TOF: {event_tof} - AdcCH: {channel} - VAL: {event_position} - DETID: {detector_id}"
+                    );
                 }
             }
             (tofs, det_ids)

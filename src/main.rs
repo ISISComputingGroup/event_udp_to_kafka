@@ -2,7 +2,6 @@ mod data_processing;
 mod metrics_logger;
 
 use crate::data_processing::process_udp_to_kafka;
-use std::num::ParseIntError;
 
 use clap::Parser;
 use rdkafka::client::ClientContext;
@@ -14,12 +13,11 @@ use rdkafka::message::Message;
 use rdkafka::producer::{DefaultProducerContext, ThreadedProducer};
 use rdkafka::topic_partition_list::TopicPartitionList;
 use serde::Deserialize;
-use csv;
 
+use log::{debug, error, info};
 use std::fs::File;
 use std::path::Path;
 use std::time::Instant;
-use log::{debug, error, info};
 
 // A context can be used to change the behavior of producers and consumers by adding callbacks
 // that will be executed by librdkafka.
@@ -94,13 +92,6 @@ struct Args {
 struct RawUdpJson {
     src: String,
     packet_data: String,
-}
-
-pub fn decode_hex(s: &str) -> Result<Vec<u8>, ParseIntError> {
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16))
-        .collect()
 }
 
 #[derive(Debug, serde::Deserialize)]
