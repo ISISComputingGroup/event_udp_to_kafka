@@ -1,7 +1,7 @@
 mod data_processing;
 mod metrics_logger;
 
-pub use crate::data_processing::process_udp_to_kafka;
+use crate::data_processing::process_udp_to_kafka;
 use std::num::ParseIntError;
 
 use clap::Parser;
@@ -14,11 +14,12 @@ use rdkafka::message::Message;
 use rdkafka::producer::{DefaultProducerContext, ThreadedProducer};
 use rdkafka::topic_partition_list::TopicPartitionList;
 use serde::Deserialize;
-extern crate csv;
+use csv;
 
 use std::fs::File;
 use std::path::Path;
 use std::time::Instant;
+use log::{debug, error, info};
 
 // A context can be used to change the behavior of producers and consumers by adding callbacks
 // that will be executed by librdkafka.
@@ -29,15 +30,15 @@ impl ClientContext for CustomContext {}
 
 impl ConsumerContext for CustomContext {
     fn pre_rebalance(&self, _: &BaseConsumer<CustomContext>, rebalance: &Rebalance) {
-        println!("Pre rebalance {:?}", rebalance);
+        info!("Pre rebalance {:?}", rebalance);
     }
 
     fn post_rebalance(&self, _: &BaseConsumer<CustomContext>, rebalance: &Rebalance) {
-        println!("Post rebalance {:?}", rebalance);
+        info!("Post rebalance {:?}", rebalance);
     }
 
     fn commit_callback(&self, result: KafkaResult<()>, _offsets: &TopicPartitionList) {
-        println!("Committing offsets: {:?}", result);
+        info!("Committing offsets: {:?}", result);
     }
 }
 
@@ -135,15 +136,14 @@ fn read_csv<P: AsRef<Path>>(filename: P) -> Vec<WiringConfigRecord> {
 
     for result in rdr.deserialize() {
         let line: WiringConfigRecord = result.unwrap();
-        println!("{:?}", line);
         csv_config.push(line);
     }
     csv_config
 }
 
 async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<WiringConfigRecord>) {
-    println!("Do UDP processing");
-    println!("{:#?}", cmd_args);
+    info!("Start UDP processing");
+    info!("Configuration: {:#?}", cmd_args);
     let kafka_broker = cmd_args.src_kafka_broker;
     let kafka_broker_dest = cmd_args.dest_kafka_broker;
     let dest_topic_name = cmd_args.dest_kafka_topic.as_str();
@@ -169,12 +169,14 @@ async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<WiringConfigRecord
         .expect("Producer creation error");
 
     consumer
-        .subscribe(&[cmd_args.src_kafka_topic.as_str()])
+        .subscribe(&[&cmd_args.src_kafka_topic])
         .expect("Can't subscribe to specified topics");
-    println!("Mode 0 - Kafka -> Kafka Processing");
+
+    info!("Mode 0 - Kafka -> Kafka Processing");
+
     loop {
         match consumer.recv().await {
-            Err(e) => println!("Kafka error: {}", e),
+            Err(e) => error!("Kafka error: {}", e),
             Ok(m) => {
                 let now = Instant::now();
 
@@ -188,7 +190,7 @@ async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<WiringConfigRecord
                 );
                 consumer.commit_message(&m, CommitMode::Async).unwrap();
 
-                println!("Num Kafka Messages to Prod: {}", kafka_fbs.len());
+                debug!("Num Kafka Messages to Prod: {}", kafka_fbs.len());
 
                 for flatbuffer in kafka_fbs {
                     let _ = producer.send(
@@ -199,8 +201,7 @@ async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<WiringConfigRecord
                 }
 
                 let elapsed = now.elapsed();
-                //println!("Elapsed: {:.2?}", elapsed, );
-                println!("PK_IP: {} - PROCt: {:?} ", raw_udpjson.src, elapsed);
+                debug!("PK_IP: {} - PROCt: {:?} ", raw_udpjson.src, elapsed);
             }
         }
     }
@@ -210,6 +211,7 @@ async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<WiringConfigRecord
 async fn main() {
     println!("DSG - Rust Data Processor");
     println!("Processing UDP data into the flatbuffers since 2024");
+    env_logger::init();
     let args = Args::parse();
 
     let filename = args.wiring_csv_path.as_str();

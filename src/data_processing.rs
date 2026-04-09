@@ -186,7 +186,7 @@ pub fn process_neutron_frame(
             packet_config_multi.push(line);
         }
     }
-    //println!("num matches: {}", num_matches);
+
     if num_matches >= 1 {
         // do we want this for LVDS or have if 1, else if greater than 1?
         match packet_config_single.brd_type.as_str() {
@@ -251,13 +251,12 @@ fn process_pc3544ms_events(
 
                     tofs.push(event_tof);
                     det_ids.push(detector_id);
-                    //println!("{event_i} - {event_hex} - TOF: {event_tof} - AdcCH: {channel} - VAL: {event_position} - DETID: {detector_id}");
+                    trace!("{event_i} - {event_hex} - TOF: {event_tof} - AdcCH: {channel} - VAL: {event_position} - DETID: {detector_id}");
                 }
             }
             (tofs, det_ids)
         }
         "PulseHeight" => {
-            println!("PulseHeight Packet");
             for event_i in 0..events_to_proc {
                 let addr = (event_i * 16) as usize;
                 let event_hex = &events_hex[addr..addr + 16];
@@ -281,7 +280,7 @@ fn process_pc3544ms_events(
 
                     tofs.push(event_tof);
                     det_ids.push(detector_id);
-                    debug!(
+                    trace!(
                         "{event_i} - {event_hex} - TOF: {event_tof} - AdcCH: {channel} - VAL: {event_pulse_height} - DETID: {detector_id}"
                     );
                 }
@@ -317,14 +316,14 @@ fn process_pc3634m1_events(
                 tofs.push(event_tof);
                 det_ids.push(det_id);
 
-                debug!(
+                trace!(
                     "{event_i} - {event_hex} - TOF: {event_tof} - VAL: {event_val} - DETID: {det_id}"
                 );
             }
             (tofs, det_ids)
         }
         _ => {
-            println!("MELON'ed -> Unable to PROC -> Unknown stream type in config");
+            error!("MELON'ed -> Unable to PROC -> Unknown stream type in config");
             (tofs, det_ids)
         }
     }
@@ -354,7 +353,6 @@ fn process_pc3877ms_events(
             (tofs, det_ids)
         }
         "PulseHeight" => {
-            println!("PulseHeight Packet");
             for event_i in 0..events_to_proc {
                 let addr = (event_i * 16) as usize;
                 let event_hex = &events_hex[addr..addr + 16];
