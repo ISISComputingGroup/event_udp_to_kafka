@@ -1,20 +1,19 @@
-mod config_reader;
-mod metrics_logger;
 mod data_processing;
+mod metrics_logger;
 
-use std::{num::ParseIntError};
 pub use crate::data_processing::process_udp_to_kafka;
+use std::num::ParseIntError;
 
+use clap::Parser;
 use rdkafka::client::ClientContext;
 use rdkafka::config::{ClientConfig, RDKafkaLogLevel};
 use rdkafka::consumer::stream_consumer::StreamConsumer;
 use rdkafka::consumer::{BaseConsumer, CommitMode, Consumer, ConsumerContext, Rebalance};
-use rdkafka::producer::{DefaultProducerContext, ThreadedProducer};
 use rdkafka::error::KafkaResult;
-use rdkafka::message::{Message};
+use rdkafka::message::Message;
+use rdkafka::producer::{DefaultProducerContext, ThreadedProducer};
 use rdkafka::topic_partition_list::TopicPartitionList;
 use serde::Deserialize;
-use clap::{Parser};
 extern crate csv;
 
 use std::fs::File;
@@ -45,24 +44,23 @@ impl ConsumerContext for CustomContext {
 // A type alias with your custom consumer can be created for convenience.
 type LoggingConsumer = StreamConsumer<CustomContext>;
 
-
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
     /// Port to use to receive data from
-    #[arg(short='p', long, default_value_t = 5005)]
+    #[arg(short = 'p', long, default_value_t = 5005)]
     port: u32,
 
     /// Ip address of the host, address to bind to
-    #[arg(short='s', long, default_value = "192.168.1.1")]
+    #[arg(short = 's', long, default_value = "192.168.1.1")]
     host_ip: String,
 
     /// url of the kafka broker
-    #[arg(short='k', long, default_value = "te7gull.te.rl.ac.uk:19092")]
+    #[arg(short = 'k', long, default_value = "te7gull.te.rl.ac.uk:19092")]
     dest_kafka_broker: String,
 
     /// Kafka topic to send the data to
-    #[arg(short='d', long)]
+    #[arg(short = 'd', long)]
     dest_kafka_topic: String,
 
     /// url of the kafka broker
@@ -70,7 +68,7 @@ struct Args {
     src_kafka_broker: String,
 
     /// Kafka topic to get data from
-    #[arg(short='t', long, default_value="")]
+    #[arg(short = 't', long, default_value = "")]
     src_kafka_topic: String,
 
     /// Script operating mode
@@ -79,22 +77,22 @@ struct Args {
     /// This script is mainly designed to function in the Kafka-> Kafka configuration
     /// With the UDP->Kafka rust buffering via kafka. This gives some failover, and potential throughput options
     ///
-    #[arg(short='m', long, verbatim_doc_comment, default_value_t = 0)]
+    #[arg(short = 'm', long, verbatim_doc_comment, default_value_t = 0)]
     mode: u32,
 
     // Consumer group to use when connecting to Kafka
-    #[arg(short='g', long, default_value="default_rust_proc")]
+    #[arg(short = 'g', long, default_value = "default_rust_proc")]
     consumer_grp: String,
 
     // Filepath to the wiring configuration file (csv)
-    #[arg(short='w', long)]
+    #[arg(short = 'w', long)]
     wiring_csv_path: String,
 }
 
 #[derive(Deserialize)]
 struct RawUdpJson {
     src: String,
-    packet_data:  String,
+    packet_data: String,
 }
 
 pub fn decode_hex(s: &str) -> Result<Vec<u8>, ParseIntError> {
@@ -105,7 +103,8 @@ pub fn decode_hex(s: &str) -> Result<Vec<u8>, ParseIntError> {
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct WiringConfigRecord {
+#[allow(unused)]
+pub struct WiringConfigRecord {
     #[serde(rename = "BRD_NUM")]
     brd_num: u8,
     #[serde(rename = "BRD_Ref")]
@@ -126,10 +125,9 @@ struct WiringConfigRecord {
     mantid_detector_id_length: u32,
     #[serde(rename = "Comment")]
     comment: String,
-
 }
 
-fn read_csv<P: AsRef<Path>>(filename: P) -> Vec<WiringConfigRecord>{
+fn read_csv<P: AsRef<Path>>(filename: P) -> Vec<WiringConfigRecord> {
     let file = File::open(filename).unwrap();
     let mut rdr = csv::Reader::from_reader(file);
 
@@ -142,7 +140,6 @@ fn read_csv<P: AsRef<Path>>(filename: P) -> Vec<WiringConfigRecord>{
     }
     csv_config
 }
-
 
 async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<WiringConfigRecord>) {
     println!("Do UDP processing");
@@ -184,12 +181,16 @@ async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<WiringConfigRecord
                 // Process the Data
                 let raw_udpjson: RawUdpJson = serde_json::from_slice(m.payload().unwrap()).unwrap();
 
-                let kafka_fbs = process_udp_to_kafka(&raw_udpjson.packet_data, &raw_udpjson.src, &wiring_config);
+                let kafka_fbs = process_udp_to_kafka(
+                    &raw_udpjson.packet_data,
+                    &raw_udpjson.src,
+                    &wiring_config,
+                );
                 consumer.commit_message(&m, CommitMode::Async).unwrap();
 
                 println!("Num Kafka Messages to Prod: {}", kafka_fbs.len());
 
-                for flatbuffer in kafka_fbs{
+                for flatbuffer in kafka_fbs {
                     let _ = producer.send(
                         rdkafka::producer::BaseRecord::to(dest_topic_name)
                             .key("")
@@ -200,24 +201,19 @@ async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<WiringConfigRecord
                 let elapsed = now.elapsed();
                 //println!("Elapsed: {:.2?}", elapsed, );
                 println!("PK_IP: {} - PROCt: {:?} ", raw_udpjson.src, elapsed);
-
             }
         }
     }
 }
 
 #[tokio::main]
-async fn main(){
+async fn main() {
     println!("DSG - Rust Data Processor");
     println!("Processing UDP data into the flatbuffers since 2024");
     let args = Args::parse();
 
-
-    let bytes: Vec<u8> = Vec::new();
-
-    let filename = "C:\\GitLab\\rust-data-stream-processor\\src\\config\\wiring.csv";
     let filename = args.wiring_csv_path.as_str();
-    let csv_data: Vec<WiringConfigRecord> = read_csv(args.wiring_csv_path.as_str());
+    let csv_data: Vec<WiringConfigRecord> = read_csv(filename);
 
     kafka_udp_process(args, csv_data).await;
 }

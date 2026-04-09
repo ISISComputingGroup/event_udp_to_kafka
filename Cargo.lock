@@ -1087,6 +1087,7 @@ dependencies = [
  "influxdb2",
  "influxdb2-derive",
  "isis_streaming_data_types",
+ "log",
  "rdkafka",
  "serde",
  "serde_json",

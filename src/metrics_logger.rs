@@ -1,9 +1,8 @@
-use influxdb2::{Client, FromDataPoint};
-use influxdb2::models::Query;
 use influxdb2_derive::WriteDataPoint;
 
 #[derive(Default, WriteDataPoint)]
 #[measurement = "packet_diagnostic"]
+#[allow(unused)]
 struct PacketDiagnostic {
     #[influxdb(tag)]
     src_ip: Option<String>,
@@ -19,6 +18,7 @@ struct PacketDiagnostic {
 
 #[derive(Default, WriteDataPoint)]
 #[measurement = "frame_diagnostic"]
+#[allow(unused)]
 struct FrameDiagnostic {
     #[influxdb(tag)]
     src_ip: Option<String>,
@@ -36,6 +36,7 @@ struct FrameDiagnostic {
 
 #[derive(Default, WriteDataPoint)]
 #[measurement = "event_diagnostic"]
+#[allow(unused)]
 struct EventDiagnostic {
     #[influxdb(tag)]
     src_ip: Option<String>,
@@ -47,8 +48,4 @@ struct EventDiagnostic {
     frame_count: i64,
     #[influxdb(timestamp)]
     time: i64,
-}
-
-pub fn demo(){
-    println!("demo test");
 }

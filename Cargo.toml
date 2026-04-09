@@ -19,6 +19,7 @@ influxdb2 = "0.5.2"
 influxdb2-derive = "0.1.1"
 isis_streaming_data_types = "0.1.1"
 flatbuffers = "25.12.19"
+log = "0.4.29"
 
 [target.'cfg(windows)'.dependencies]
 rdkafka = { version="0.39.0", features = ["cmake_build"] }
