@@ -1,18 +1,9 @@
-mod ev42_events_generated;
-mod ev44_events_generated;
-
-use std::io::Bytes;
-use std::u32;
-use serde_json::from_str;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use chrono::prelude::*;
 use crate::wiring_config_record;
 extern crate flatbuffers;
 
 use flatbuffers::FlatBufferBuilder;
-use ev42_events_generated::{EventMessage, EventMessageArgs, finish_event_message_buffer, root_as_event_message};
-use ev44_events_generated::{Event44Message, Event44MessageArgs, finish_event_44_message_buffer, root_as_event_44_message};
-//use crate::ev42_events_generated::{UInt32ArrayArgs, ValueUnion};
+use isis_streaming_data_types::flatbuffers_generated::events_ev44::{Event44Message, Event44MessageArgs, finish_event_44_message_buffer};
 
 pub fn process_udp_to_kafka<'a>(udp_hex: &'a str, src_ip: &'a str, wiring_config: &'a Vec<wiring_config_record>) -> Vec<Vec<u8>>{
     use std::time::Instant;
@@ -124,7 +115,7 @@ fn packet_to_frames(udp_hex: &str) -> (Vec<&str>, Vec<u8>){
     }
 }
 
-pub fn process_neutron_frame(frame_udp: &str, src_ip: &str, wiring_config: &Vec<wiring_config_record>, ev42_fb_packets: &mut Vec<Vec<u8>>){
+pub fn process_neutron_frame(frame_udp: &str, src_ip: &str, wiring_config: &Vec<wiring_config_record>, ev44_fb_packets: &mut Vec<Vec<u8>>){
     let num_words = frame_udp.len() / 8;
     let exp_events = (num_words - 15) / 2;  // could be less if PCB has added padding Zeros
     //println!("{src_ip} NeuF - NW {}, NE {}", num_words, exp_events);
@@ -176,13 +167,12 @@ pub fn process_neutron_frame(frame_udp: &str, src_ip: &str, wiring_config: &Vec<
         }
         else{
             // println!("Ne-{}", tofs.len());
-            let mut fb_bytes: Vec<u8> = Vec::new(); //vector to hold ev42 bytes
-            //encode_ev42(&mut bldr, &mut fb_bytes, "rust_proc", 0,frame_time_ns, &tofs, &det_ids);
+            let mut fb_bytes: Vec<u8> = Vec::new(); //vector to hold ev44 bytes
 
             // Trying with EV44 Packets
             encode_ev44(&mut bldr, &mut fb_bytes, "rust_proc", 0,frame_time_ns, &tofs, &det_ids);
             //println!("fb: {:?}", fb_bytes);
-            ev42_fb_packets.push(fb_bytes);
+            ev44_fb_packets.push(fb_bytes);
         }
     }
     else {
@@ -417,26 +407,6 @@ fn group_bytes_by_events(udp_hex: &str, words_per_event: usize) -> Vec<&str>{
 
     // let event_bytes: Vec<Vec<u8>> = udp_hex.chunks(bytes_per_event).map(|c| c.to_vec()).collect();
     // event_bytes
-}
-
-fn encode_ev42(bldr: &mut FlatBufferBuilder, dest: &mut Vec<u8>, source_name: &str, message_id: u64, pulse_time: u64, tofs: &Vec<u32>, det_ids: &Vec<u32>){
-    dest.clear();
-    bldr.reset();
-
-    let args = EventMessageArgs{
-        source_name: Option::from(bldr.create_string("DAE_Streamed_RustProc")),
-        message_id: message_id,
-        pulse_time: pulse_time,
-        time_of_flight: Option::from(bldr.create_vector(tofs)),
-        detector_id: Option::from(bldr.create_vector(det_ids)),
-        facility_specific_data_type: Default::default(),
-        facility_specific_data: None,
-    };
-
-    let ev42_offset = EventMessage::create(bldr, &args);
-    finish_event_message_buffer(bldr, ev42_offset);
-    let finished_data = bldr.finished_data();
-    dest.extend_from_slice(finished_data);
 }
 
 fn encode_ev44(bldr: &mut FlatBufferBuilder, dest: &mut Vec<u8>, source_name: &str, message_id: u64, pulse_time: u64, tofs: &Vec<u32>, det_ids: &Vec<u32>) {
