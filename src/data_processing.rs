@@ -1,11 +1,11 @@
 use chrono::prelude::*;
-use crate::wiring_config_record;
+use crate::WiringConfigRecord;
 extern crate flatbuffers;
 
 use flatbuffers::FlatBufferBuilder;
 use isis_streaming_data_types::flatbuffers_generated::events_ev44::{Event44Message, Event44MessageArgs, finish_event_44_message_buffer};
 
-pub fn process_udp_to_kafka<'a>(udp_hex: &'a str, src_ip: &'a str, wiring_config: &'a Vec<wiring_config_record>) -> Vec<Vec<u8>>{
+pub fn process_udp_to_kafka<'a>(udp_hex: &'a str, src_ip: &'a str, wiring_config: &'a Vec<WiringConfigRecord>) -> Vec<Vec<u8>>{
     use std::time::Instant;
   //  let now = Instant::now();
 
@@ -115,7 +115,7 @@ fn packet_to_frames(udp_hex: &str) -> (Vec<&str>, Vec<u8>){
     }
 }
 
-pub fn process_neutron_frame(frame_udp: &str, src_ip: &str, wiring_config: &Vec<wiring_config_record>, ev44_fb_packets: &mut Vec<Vec<u8>>){
+pub fn process_neutron_frame(frame_udp: &str, src_ip: &str, wiring_config: &Vec<WiringConfigRecord>, ev44_fb_packets: &mut Vec<Vec<u8>>){
     let num_words = frame_udp.len() / 8;
     let exp_events = (num_words - 15) / 2;  // could be less if PCB has added padding Zeros
     //println!("{src_ip} NeuF - NW {}, NE {}", num_words, exp_events);
@@ -138,12 +138,12 @@ pub fn process_neutron_frame(frame_udp: &str, src_ip: &str, wiring_config: &Vec<
     let mut bldr = FlatBufferBuilder::new();
 
     // find IP address within the wiring config - get config line
-    let mut packet_config_single: &wiring_config_record = wiring_config.first().unwrap();
-    let mut packet_config_multi: Vec<&wiring_config_record> = Vec::new();
+    let mut packet_config_single: &WiringConfigRecord = wiring_config.first().unwrap();
+    let mut packet_config_multi: Vec<&WiringConfigRecord> = Vec::new();
 
     let mut num_matches = 0;
     for line in wiring_config{
-        if src_ip == line.StreamingIP{
+        if src_ip == line.streaming_ip {
             num_matches += 1;
             packet_config_single = line;
             packet_config_multi.push(line);
@@ -151,7 +151,7 @@ pub fn process_neutron_frame(frame_udp: &str, src_ip: &str, wiring_config: &Vec<
     }
     //println!("num matches: {}", num_matches);
     if num_matches >= 1 {   // do we want this for LVDS or have if 1, else if greater than 1?
-        match packet_config_single.BRD_Type.as_str() {
+        match packet_config_single.brd_type.as_str() {
             "PC3634M1S" => {(tofs, det_ids) = process_pc3634m1_events(events_only_hex, packet_config_single, events_to_proc); },    // 128CH LVDS Card
             "PC3544MS" => {(tofs, det_ids) = process_pc3544ms_events(events_only_hex, packet_config_multi, events_to_proc); },      // MADC PB
             "PC3877MS" => {(tofs, det_ids) = process_pc3877ms_events(events_only_hex, packet_config_single, events_to_proc); },     // WLSF Streaming Electronics
@@ -182,10 +182,10 @@ pub fn process_neutron_frame(frame_udp: &str, src_ip: &str, wiring_config: &Vec<
 
 }
 
-fn process_pc3544ms_events(events_hex: &str, packet_config: Vec<&wiring_config_record>, events_to_proc: u32)-> (Vec<u32>, Vec<u32>) {
+fn process_pc3544ms_events(events_hex: &str, packet_config: Vec<&WiringConfigRecord>, events_to_proc: u32) -> (Vec<u32>, Vec<u32>) {
     let mut tofs: Vec<u32> = Vec::new();
     let mut det_ids: Vec<u32> = Vec::new();
-    match packet_config[0].Packet_Type.as_str() {
+    match packet_config[0].packet_type.as_str() {
         "Position" => {
             for event_i in 0..events_to_proc {
                 let addr = (event_i * 16) as usize;
@@ -194,16 +194,16 @@ fn process_pc3544ms_events(events_hex: &str, packet_config: Vec<&wiring_config_r
                 let channel = u8::from_str_radix(&binary_event[35..38], 2).unwrap();
                 let event_position = u32::from_str_radix(&binary_event[52..64], 2).unwrap();
 
-                let mut channel_config: &wiring_config_record = &packet_config.first().unwrap();
+                let mut channel_config: &WiringConfigRecord = &packet_config.first().unwrap();
                 let mut matches = 0;
                 for possible_channel in &packet_config{
-                    if channel == possible_channel.CH{
+                    if channel == possible_channel.ch {
                         channel_config = possible_channel;
                         matches += 1;
                     }
                 }
                 if matches == 1 {
-                    let detector_id = (event_position / (4096 / channel_config.Mantid_Detector_ID_Lenght)) + channel_config.Mantid_DetectorID_Start;
+                    let detector_id = (event_position / (4096 / channel_config.mantid_detector_id_length)) + channel_config.mantid_detector_id_start;
                     let event_tof = u32::from_str_radix(&event_hex[2..8], 16).unwrap();
 
                     tofs.push(event_tof);
@@ -224,16 +224,16 @@ fn process_pc3544ms_events(events_hex: &str, packet_config: Vec<&wiring_config_r
                 let channel = u8::from_str_radix(&binary_event[35..38], 2).unwrap();
                 let event_pulse_height= u32::from_str_radix(&binary_event[40..52], 2).unwrap();
 
-                let mut channel_config: &wiring_config_record = &packet_config.first().unwrap();
+                let mut channel_config: &WiringConfigRecord = &packet_config.first().unwrap();
                 let mut matches = 0;
                 for possible_channel in &packet_config{
-                    if channel == possible_channel.CH{
+                    if channel == possible_channel.ch {
                         channel_config = possible_channel;
                         matches += 1;
                     }
                 }
                 if matches == 1 {
-                    let detector_id = (event_pulse_height / (4096 / channel_config.Mantid_Detector_ID_Lenght)) + channel_config.Mantid_DetectorID_Start;
+                    let detector_id = (event_pulse_height / (4096 / channel_config.mantid_detector_id_length)) + channel_config.mantid_detector_id_start;
                     let event_tof = u32::from_str_radix(&event_hex[2..8], 16).unwrap();
 
                     tofs.push(event_tof);
@@ -252,11 +252,11 @@ fn process_pc3544ms_events(events_hex: &str, packet_config: Vec<&wiring_config_r
     }
 }
 
-fn process_pc3634m1_events(events_hex: &str, packet_config: &wiring_config_record, events_to_proc: u32)-> (Vec<u32>, Vec<u32>) {
+fn process_pc3634m1_events(events_hex: &str, packet_config: &WiringConfigRecord, events_to_proc: u32) -> (Vec<u32>, Vec<u32>) {
     let mut tofs: Vec<u32> = Vec::new();
     let mut det_ids: Vec<u32> = Vec::new();
 
-    match packet_config.Packet_Type.as_str() {
+    match packet_config.packet_type.as_str() {
         "DIM_OUT" => {
             for event_i in 0..events_to_proc {
                 let addr = (event_i * 16) as usize;
@@ -265,7 +265,7 @@ fn process_pc3634m1_events(events_hex: &str, packet_config: &wiring_config_recor
                 let event_tof = u32::from_str_radix(&event_hex[2..8], 16).unwrap();
                 let event_val = u32::from_str_radix(&event_hex[8..16], 16).unwrap();
 
-                let det_id = event_val + packet_config.Mantid_DetectorID_Start;
+                let det_id = event_val + packet_config.mantid_detector_id_start;
 
                 tofs.push(event_tof);
                 det_ids.push(det_id);
@@ -281,10 +281,10 @@ fn process_pc3634m1_events(events_hex: &str, packet_config: &wiring_config_recor
     }
 }
 
-fn process_pc3877ms_events(events_hex: &str, packet_config: &wiring_config_record, events_to_proc: u32)-> (Vec<u32>, Vec<u32>) {
+fn process_pc3877ms_events(events_hex: &str, packet_config: &WiringConfigRecord, events_to_proc: u32) -> (Vec<u32>, Vec<u32>) {
     let mut tofs: Vec<u32> = Vec::new();
     let mut det_ids: Vec<u32> = Vec::new();
-    match packet_config.Packet_Type.as_str() {
+    match packet_config.packet_type.as_str() {
         "Position" => {
             for event_i in 0..events_to_proc {
                 let addr = (event_i * 16) as usize;
@@ -293,7 +293,7 @@ fn process_pc3877ms_events(events_hex: &str, packet_config: &wiring_config_recor
                 let event_val = u32::from_str_radix(&binary_event[48..64], 2).unwrap();
 
                 let event_tof = u32::from_str_radix(&event_hex[2..8], 16).unwrap() * 20;
-                let det_id = event_val + packet_config.Mantid_DetectorID_Start;
+                let det_id = event_val + packet_config.mantid_detector_id_start;
 
                 //println!("pc3877ms - {event_i} - {event_hex} - TOF: {event_tof} - VAL: {event_val} - DETID: {det_id}");
                 tofs.push(event_tof);
@@ -310,7 +310,7 @@ fn process_pc3877ms_events(events_hex: &str, packet_config: &wiring_config_recor
                 let event_val = u32::from_str_radix(&binary_event[36..48], 2).unwrap();
 
                 let event_tof = u32::from_str_radix(&event_hex[2..8], 16).unwrap();
-                let det_id = event_val + packet_config.Mantid_DetectorID_Start;
+                let det_id = event_val + packet_config.mantid_detector_id_start;
 
                 tofs.push(event_tof);
                 det_ids.push(det_id);

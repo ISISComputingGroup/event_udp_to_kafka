@@ -1,32 +1,25 @@
-mod kafka;
 mod config_reader;
 mod metrics_logger;
 mod data_processing;
 
-//use std::io::Error;
-use std::error::Error;
-use std::{fmt::Write, num::ParseIntError};
-pub use crate::metrics_logger::demo;
-//pub use crate::data_processing::header_decoder;
+use std::{num::ParseIntError};
 pub use crate::data_processing::process_udp_to_kafka;
 
 use rdkafka::client::ClientContext;
 use rdkafka::config::{ClientConfig, RDKafkaLogLevel};
 use rdkafka::consumer::stream_consumer::StreamConsumer;
 use rdkafka::consumer::{BaseConsumer, CommitMode, Consumer, ConsumerContext, Rebalance};
-use rdkafka::producer::{DefaultProducerContext, FutureProducer, FutureRecord, ThreadedProducer};
+use rdkafka::producer::{DefaultProducerContext, ThreadedProducer};
 use rdkafka::error::KafkaResult;
-use rdkafka::message::{Headers, Message};
+use rdkafka::message::{Message};
 use rdkafka::topic_partition_list::TopicPartitionList;
-use rdkafka::util::get_rdkafka_version;
-use std::time::Duration;
-use bytes::Bytes;
 use serde::Deserialize;
-use clap::{Arg, Parser};
+use clap::{Parser};
 extern crate csv;
 
 use std::fs::File;
 use std::path::Path;
+use std::time::Instant;
 
 // A context can be used to change the behavior of producers and consumers by adding callbacks
 // that will be executed by librdkafka.
@@ -99,10 +92,9 @@ struct Args {
 }
 
 #[derive(Deserialize)]
-struct rawUdpJSON {
+struct RawUdpJson {
     src: String,
     packet_data:  String,
-    // add the other fields if you need them
 }
 
 pub fn decode_hex(s: &str) -> Result<Vec<u8>, ParseIntError> {
@@ -113,28 +105,38 @@ pub fn decode_hex(s: &str) -> Result<Vec<u8>, ParseIntError> {
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct wiring_config_record {
-    BRD_NUM: u8,
-    BRD_Ref: String,
-    BRD_Type: String,
-    Packet_Type: String,
-    SW_Pos: u8,
-    StreamingIP: String,
-    CH: u8,
-    Mantid_DetectorID_Start: u32,
-    Mantid_Detector_ID_Lenght: u32,
-    Comment: String,
+struct WiringConfigRecord {
+    #[serde(rename = "BRD_NUM")]
+    brd_num: u8,
+    #[serde(rename = "BRD_Ref")]
+    brd_ref: String,
+    #[serde(rename = "BRD_Type")]
+    brd_type: String,
+    #[serde(rename = "Packet_Type")]
+    packet_type: String,
+    #[serde(rename = "SW_Pos")]
+    sw_pos: u8,
+    #[serde(rename = "StreamingIP")]
+    streaming_ip: String,
+    #[serde(rename = "CH")]
+    ch: u8,
+    #[serde(rename = "Mantid_DetectorID_Start")]
+    mantid_detector_id_start: u32,
+    #[serde(rename = "Mantid_Detector_ID_Lenght")]
+    mantid_detector_id_length: u32,
+    #[serde(rename = "Comment")]
+    comment: String,
 
 }
 
-fn read_csv<P: AsRef<Path>>(filename: P) -> Vec<wiring_config_record>{
+fn read_csv<P: AsRef<Path>>(filename: P) -> Vec<WiringConfigRecord>{
     let file = File::open(filename).unwrap();
     let mut rdr = csv::Reader::from_reader(file);
 
     let mut csv_config = Vec::new();
 
     for result in rdr.deserialize() {
-        let line: wiring_config_record = result.unwrap();
+        let line: WiringConfigRecord = result.unwrap();
         println!("{:?}", line);
         csv_config.push(line);
     }
@@ -142,7 +144,7 @@ fn read_csv<P: AsRef<Path>>(filename: P) -> Vec<wiring_config_record>{
 }
 
 
-async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<wiring_config_record>) {
+async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<WiringConfigRecord>) {
     println!("Do UDP processing");
     println!("{:#?}", cmd_args);
     let kafka_broker = cmd_args.src_kafka_broker;
@@ -177,19 +179,10 @@ async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<wiring_config_reco
         match consumer.recv().await {
             Err(e) => println!("Kafka error: {}", e),
             Ok(m) => {
-                let payload = match m.payload_view::<str>() {
-                    None => "",
-                    Some(Ok(s)) => s,
-                    Some(Err(e)) => {
-                        println!("Error while deserializing message payload: {:?}", e);
-                        ""
-                    }
-                };
-                use std::time::Instant;
                 let now = Instant::now();
 
                 // Process the Data
-                let raw_udpjson: rawUdpJSON = serde_json::from_slice(m.payload().unwrap()).unwrap();
+                let raw_udpjson: RawUdpJson = serde_json::from_slice(m.payload().unwrap()).unwrap();
 
                 let kafka_fbs = process_udp_to_kafka(&raw_udpjson.packet_data, &raw_udpjson.src, &wiring_config);
                 consumer.commit_message(&m, CommitMode::Async).unwrap();
@@ -197,42 +190,12 @@ async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<wiring_config_reco
                 println!("Num Kafka Messages to Prod: {}", kafka_fbs.len());
 
                 for flatbuffer in kafka_fbs{
-                    let produce_error = producer.send(
+                    let _ = producer.send(
                         rdkafka::producer::BaseRecord::to(dest_topic_name)
                             .key("")
                             .payload(&flatbuffer),
-                        //   Duration::from_secs(0),
                     );
                 }
-
-                    // let futures = kafka_fbs.iter()
-                    //     .map(|i| async move {
-                    //         // The send operation on the topic returns a future, which will be
-                    //         // completed once the result or failure from Kafka is received.
-                    //         let delivery_status = producer
-                    //             .send::<Vec<u8>, _, _>(
-                    //                 FutureRecord::to(dest_topic_name)
-                    //                     .payload(i),
-                    //                 //    .key(&format!("Key {}", i)),
-                    //                 // .headers(OwnedHeaders::new().insert(Header {
-                    //                 //     key: "header_key",
-                    //                 //     value: Some("header_value"),
-                    //                 // })),
-                    //                 Duration::from_secs(0),
-                    //             )
-                    //             .await;
-                    //
-                    //         // This will be executed when the result is received.
-                    //         //println!("Delivery status for message - received");
-                    //         delivery_status
-                    //     })
-                    //     .collect::<Vec<_>>();
-                    //
-                    // // This loop will wait until all delivery statuses have been received.
-                    // for future in futures {
-                    //     future.await.expect("TODO: panic message");
-                    //     //println!("Future completed. Result: {:?}", future.await);
-                    // }
 
                 let elapsed = now.elapsed();
                 //println!("Elapsed: {:.2?}", elapsed, );
@@ -252,10 +215,9 @@ async fn main(){
 
     let bytes: Vec<u8> = Vec::new();
 
-
     let filename = "C:\\GitLab\\rust-data-stream-processor\\src\\config\\wiring.csv";
     let filename = args.wiring_csv_path.as_str();
-    let csv_data: Vec<wiring_config_record> = read_csv(args.wiring_csv_path.as_str());
+    let csv_data: Vec<WiringConfigRecord> = read_csv(args.wiring_csv_path.as_str());
 
     kafka_udp_process(args, csv_data).await;
 }
