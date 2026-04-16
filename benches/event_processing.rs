@@ -51,9 +51,7 @@ fn benchmark_message_processing(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(n_bytes as u64));
 
     group.bench_function("benchmark_message_processing", |b| {
-        b.iter(|| {
-            process_udp_to_kafka(black_box(&data), black_box("192.168.1.1"), &wiring_config)
-        })
+        b.iter(|| process_udp_to_kafka(black_box(&data), black_box("192.168.1.1"), &wiring_config))
     });
 }
 

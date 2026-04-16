@@ -6,6 +6,7 @@ use isis_streaming_data_types::flatbuffers_generated::events_ev44::{
     Event44Message, Event44MessageArgs, finish_event_44_message_buffer,
 };
 use log::{debug, error, trace, warn};
+use crate::header::Header;
 
 pub fn process_udp_to_kafka<'a>(
     udp_hex: &'a str,
@@ -52,7 +53,6 @@ pub fn process_udp_to_kafka<'a>(
         kafka_bytes
     }
 }
-
 
 /// Takes in a reference to a hex string containing UDP data
 /// Returns two vectors, first of each frame second of the frame type
@@ -140,7 +140,6 @@ fn packet_to_frames(udp_hex: &str) -> (Vec<&str>, Vec<u8>) {
 const HEADER_LENGTH_BYTES: usize = 60;
 const HEADER_LENGTH_HEX_CHARS: usize = HEADER_LENGTH_BYTES * 2;
 
-#[allow(unused)]
 pub struct FrameHeader {
     pub events_in_frame: u32,
     pub frame_number: u32,
@@ -156,7 +155,7 @@ fn process_neutron_frame(
     ev44_fb_packets: &mut Vec<Vec<u8>>,
 ) {
     let num_words = frame_udp.len() / 8;
-    let exp_events = (num_words - 15) / 2;  // could be less if PCB has added padding Zeros
+    let exp_events = (num_words - 15) / 2; // could be less if PCB has added padding Zeros
 
     let header = header_decoder(&frame_udp[0..HEADER_LENGTH_HEX_CHARS]);
 
@@ -449,6 +448,9 @@ pub fn header_decoder(header_udp: &str) -> FrameHeader {
         frame_number, events_in_frame, period_num, ppp_in_frame, total_ns
     );
     trace!("time nS: {}", total_ns);
+
+    // let header_bytes = hex::decode(header_udp).expect("Invalid UDP bytes");
+    // let header = Header::new(&header_bytes);
 
     FrameHeader {
         events_in_frame,

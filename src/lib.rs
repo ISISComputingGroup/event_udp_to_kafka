@@ -1,4 +1,6 @@
 pub mod data_processing;
+pub mod gps_time;
+pub mod header;
 pub mod metrics_logger;
 
 use crate::data_processing::process_udp_to_kafka;

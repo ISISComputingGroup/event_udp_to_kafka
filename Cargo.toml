@@ -20,6 +20,7 @@ isis_streaming_data_types = "0.1.1"
 flatbuffers = "25.12.19"
 log = "0.4.29"
 env_logger = "0.11.10"
+hex = {version = "0.4.3"}
 
 [target.'cfg(windows)'.dependencies]
 rdkafka = { version="0.39.0", features = ["cmake_build"] }
@@ -29,7 +30,6 @@ rdkafka = { version="0.39.0", features = ["cmake_build", "curl", "ssl-vendored"]
 
 [dev-dependencies]
 criterion = { version = "0.8.2",  features = ["html_reports"]}
-hex = {version = "0.4.3"}
 
 [[bench]]
 name = "event_processing"
