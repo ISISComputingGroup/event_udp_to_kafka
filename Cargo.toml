@@ -26,3 +26,11 @@ rdkafka = { version="0.39.0", features = ["cmake_build"] }
 
 [target.'cfg(unix)'.dependencies]
 rdkafka = { version="0.39.0", features = ["cmake_build", "curl", "ssl-vendored"] }
+
+[dev-dependencies]
+criterion = { version = "0.8.2",  features = ["html_reports"]}
+hex = {version = "0.4.3"}
+
+[[bench]]
+name = "event_processing"
+harness = false

@@ -1,6 +1,5 @@
 use crate::WiringConfigRecord;
 use chrono::prelude::*;
-extern crate flatbuffers;
 
 use flatbuffers::FlatBufferBuilder;
 use isis_streaming_data_types::flatbuffers_generated::events_ev44::{
@@ -54,11 +53,11 @@ pub fn process_udp_to_kafka<'a>(
     }
 }
 
-fn packet_to_frames(udp_hex: &str) -> (Vec<&str>, Vec<u8>) {
-    // Takes in a reference to a hex string containing UDP data
-    // Returns two vectors, first of each frame second of the frame type
-    // Vectors will have a len of 0 if no frames found
 
+/// Takes in a reference to a hex string containing UDP data
+/// Returns two vectors, first of each frame second of the frame type
+/// Vectors will have a len of 0 if no frames found
+fn packet_to_frames(udp_hex: &str) -> (Vec<&str>, Vec<u8>) {
     const VETO_FRAME_HEADER: &str = "fcffffff";
     const SE_FRAME_HEADER: &str = "fdffffff";
     const NEUTRON_HEADER: &str = "ffffffff";
@@ -137,7 +136,9 @@ fn packet_to_frames(udp_hex: &str) -> (Vec<&str>, Vec<u8>) {
     }
 }
 
-const HEADER_LENGTH: usize = 120;
+/// Length of header packet
+const HEADER_LENGTH_BYTES: usize = 60;
+const HEADER_LENGTH_HEX_CHARS: usize = HEADER_LENGTH_BYTES * 2;
 
 #[allow(unused)]
 pub struct FrameHeader {
@@ -148,18 +149,18 @@ pub struct FrameHeader {
     pub total_ns: u64,
 }
 
-pub fn process_neutron_frame(
+fn process_neutron_frame(
     frame_udp: &str,
     src_ip: &str,
     wiring_config: &Vec<WiringConfigRecord>,
     ev44_fb_packets: &mut Vec<Vec<u8>>,
 ) {
     let num_words = frame_udp.len() / 8;
-    let exp_events = (num_words - 15) / 2; // could be less if PCB has added padding Zeros
+    let exp_events = (num_words - 15) / 2;  // could be less if PCB has added padding Zeros
 
-    let header = header_decoder(&frame_udp[0..HEADER_LENGTH]);
+    let header = header_decoder(&frame_udp[0..HEADER_LENGTH_HEX_CHARS]);
 
-    let events_only_hex = &frame_udp[HEADER_LENGTH..];
+    let events_only_hex = &frame_udp[HEADER_LENGTH_HEX_CHARS..];
 
     let mut events_to_proc = header.events_in_frame;
     if events_to_proc > exp_events as u32 {
@@ -336,8 +337,8 @@ fn process_pc3877ms_events(
     packet_config: &WiringConfigRecord,
     events_to_proc: u32,
 ) -> (Vec<u32>, Vec<u32>) {
-    let mut tofs: Vec<u32> = Vec::new();
-    let mut det_ids: Vec<u32> = Vec::new();
+    let mut tofs: Vec<u32> = Vec::with_capacity(events_to_proc as usize);
+    let mut det_ids: Vec<u32> = Vec::with_capacity(events_to_proc as usize);
     match packet_config.packet_type.as_str() {
         "Position" => {
             for event_i in 0..events_to_proc {
@@ -511,5 +512,76 @@ fn to_binary(c: char) -> &'static str {
         'e' => "1110",
         'f' => "1111",
         _ => "",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use isis_streaming_data_types::{DeserializedMessage, deserialize_message};
+
+    #[test]
+    fn test_hex_to_binary() {
+        assert_eq!(hex_to_binary("20af"), "0010000010101111");
+    }
+
+    fn make_raw_udp_message(num_events: usize) -> Vec<u8> {
+        // Note: 4-byte words
+        // Total header length: 60 bytes (15 words)
+        [255_u8; 4] // Header word 0: 'running' header marker
+            .iter()
+            .chain(&[255_u8; 4]) // Header word 1: neutron data header marker
+            .chain(&[0_u8; 4]) // Header word 2: information
+            .chain(&[0_u8; 4]) // Header word 3: frame number
+            .chain(&[0_u8; 8]) // Header words 4 & 5: GPS timestamp
+            .chain(&[0_u8; 2]) // Header word 6: period number
+            .chain(&[0_u8; 2]) // Header word 6: unused
+            .chain(&(num_events as u32).to_be_bytes()) // Header word 7: events in frame
+            .chain(&[0_u8; 2]) // Header word 8: ppp_in_frame
+            .chain(&[0_u8; 2]) // Header word 8: unused
+            .chain(&[0_u8; 4]) // Header word 9: vetoes
+            .chain(&[0_u8; 4]) // Header word 10: address of next frame
+            .chain(&[0_u8; 4]) // Header word 11: address of next frame (word address)
+            .chain(&[0_u8; 4]) // Header word 12: streamed frame number
+            .chain(&[0_u8; 4]) // Header word 13: not used
+            .chain(&[0_u8; 4]) // Header word 14: not used
+            .chain(&[0_u8; 4]) // Header word 15: not used
+            .chain(&vec![0_u8; num_events * 8]) // 8-byte event messages
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn test_decode_pc3877ms() {
+        let num_events = 100;
+        let raw_data = make_raw_udp_message(num_events);
+        let n_bytes = raw_data.len();
+
+        assert_eq!(n_bytes, 64 + num_events * 8);
+
+        let data = hex::encode(raw_data);
+
+        let wiring_config = vec![WiringConfigRecord {
+            brd_num: 0,
+            brd_ref: "WLSF0".to_owned(),
+            brd_type: "PC3877MS".to_owned(),
+            packet_type: "Position".to_owned(),
+            sw_pos: 0,
+            streaming_ip: "192.168.1.1".to_owned(),
+            ch: 0,
+            mantid_detector_id_start: 0,
+            mantid_detector_id_length: 1,
+            comment: "WLSF Module".to_owned(),
+        }];
+
+        let msgs = process_udp_to_kafka(&data, "192.168.1.1", &wiring_config);
+
+        assert_eq!(msgs.len(), 1);
+        match deserialize_message(&msgs[0]) {
+            Ok(DeserializedMessage::EventDataEv44(msg)) => {
+                assert_eq!(msg.time_of_flight().unwrap().len(), 100);
+            }
+            _ => panic!("Could not deserialize"),
+        }
     }
 }
