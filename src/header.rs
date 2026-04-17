@@ -2,14 +2,15 @@ use crate::gps_time::GpsTime;
 
 pub const HEADER_LEN_BYTES: usize = 16 * 4; // 16 4-byte words
 
-pub struct Header<'a> {
+pub struct UdpHeaderView<'a> {
     content: &'a [u8],
 }
 
-impl <'a> Header<'a> {
-    pub fn new(content: &[u8]) -> Option<Header<'_>> {
-        (content.len() >= HEADER_LEN_BYTES).then_some(Header { content })
+impl<'a> UdpHeaderView<'a> {
+    pub fn new(content: &[u8]) -> Option<UdpHeaderView<'_>> {
+        (content.len() >= HEADER_LEN_BYTES).then_some(UdpHeaderView { content })
     }
+
     pub fn word(&self, n: usize) -> [u8; 4] {
         self.content[4 * n..4 * n + 4]
             .try_into()
@@ -41,7 +42,11 @@ impl <'a> Header<'a> {
     }
 
     pub fn gps_time(&self) -> GpsTime {
-        GpsTime::from_packed_repr(u64::from_be_bytes(self.content[4*4..6*4].try_into().expect("content length was already checked")))
+        GpsTime::from_packed_repr(u64::from_be_bytes(
+            self.content[4 * 4..6 * 4]
+                .try_into()
+                .expect("content length was already checked"),
+        ))
     }
 }
 
@@ -77,7 +82,7 @@ mod tests {
     #[test]
     fn test_header() {
         let msg = make_raw_udp_message(10, 23, 0);
-        let header = Header::new(&msg).unwrap();
+        let header = UdpHeaderView::new(&msg).unwrap();
 
         assert!(header.is_neutron_data_header());
         assert_eq!(header.events_in_frame(), 10);

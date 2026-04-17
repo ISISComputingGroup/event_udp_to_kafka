@@ -1,145 +1,141 @@
 use crate::WiringConfigRecord;
-use chrono::prelude::*;
 
+use crate::header::{HEADER_LEN_BYTES, UdpHeaderView};
 use flatbuffers::FlatBufferBuilder;
 use isis_streaming_data_types::flatbuffers_generated::events_ev44::{
     Event44Message, Event44MessageArgs, finish_event_44_message_buffer,
 };
-use log::{debug, error, trace, warn};
-use crate::header::Header;
+use log::{error, trace, warn};
 
-pub fn process_udp_to_kafka<'a>(
-    udp_hex: &'a str,
-    src_ip: &'a str,
-    wiring_config: &'a Vec<WiringConfigRecord>,
+/// Input: hexed string containing the data from a UDP packet (which may contain multiple
+/// event packets)
+///
+/// Output: Vector of flatbuffers-encoded messages to send to Kafka
+pub fn process_udp_to_kafka(
+    udp_hex: &str,
+    src_ip: &str,
+    wiring_config: &[WiringConfigRecord],
+) -> Vec<Vec<u8>> {
+    process_udp_bytes_to_kafka(
+        &hex::decode(udp_hex).expect("Invalid hex"),
+        src_ip,
+        wiring_config,
+    )
+}
+
+/// Input: binary data from a UDP packet (which may contain multiple event packets)
+///
+/// Output: Vector of flatbuffers-encoded messages to send to Kafka
+pub fn process_udp_bytes_to_kafka(
+    udp_packet: &[u8],
+    src_ip: &str,
+    wiring_config: &[WiringConfigRecord],
 ) -> Vec<Vec<u8>> {
     // make the vector for the product now
-    let mut kafka_bytes: Vec<Vec<u8>> = Vec::new();
+    let mut kafka_bytes: Vec<Vec<u8>> = vec![];
 
     // Split into the different frames in the packet
     // Filters any empty frames each time
-    let (frames_udp, frames_types) = packet_to_frames(udp_hex);
-    if frames_types.is_empty() {
-        kafka_bytes
-    } else {
-        // If there are valid frames to deal with
-        debug!("NFilt: {} - Types: {:?}", frames_udp.len(), frames_types);
-        for frame_i in 0..frames_udp.len() {
-            trace!("processing frame: {frame_i}");
-            match frames_types[frame_i] {
-                1 => {
-                    trace!("PROC For Neutron Frame Header - {:?}", frames_udp[frame_i]);
-                    process_neutron_frame(
-                        frames_udp[frame_i],
-                        src_ip,
-                        wiring_config,
-                        &mut kafka_bytes,
-                    );
-                }
-                2 => {
-                    trace!("PROC For Veto Frame Header");
-                    process_neutron_frame(
-                        frames_udp[frame_i],
-                        src_ip,
-                        wiring_config,
-                        &mut kafka_bytes,
-                    );
-                }
-                3 => trace!("PROC For SE Frame Header"),
-                _ => warn!("Undefined frame type"),
+    let frames = packet_to_frames(udp_packet);
+
+    for frame in frames {
+        match frame.packet_type {
+            UdpPacketType::NeutronData => {
+                process_neutron_frame(frame.packet, src_ip, wiring_config, &mut kafka_bytes);
+            }
+            UdpPacketType::SampleEnvironment => {
+                todo!("Implement sample environment")
+            }
+            UdpPacketType::VetoFrame => {
+                todo!("Implement veto frame")
             }
         }
-
-        kafka_bytes
     }
+
+    kafka_bytes
 }
 
-/// Takes in a reference to a hex string containing UDP data
-/// Returns two vectors, first of each frame second of the frame type
-/// Vectors will have a len of 0 if no frames found
-fn packet_to_frames(udp_hex: &str) -> (Vec<&str>, Vec<u8>) {
-    const VETO_FRAME_HEADER: &str = "fcffffff";
-    const SE_FRAME_HEADER: &str = "fdffffff";
-    const NEUTRON_HEADER: &str = "ffffffff";
-
-    // Convert the packet into the words
-    let words = udp_hex
-        .as_bytes()
-        .chunks(8)
-        .map(str::from_utf8)
-        .collect::<Result<Vec<&str>, _>>()
-        .unwrap();
-
-    // Make a vector of the addresses for each frame header found
-    let mut frame_index: Vec<u32> = Vec::new();
-    // Vector to hold a number representing the type of frame detected
-    let mut frame_types: Vec<u8> = Vec::new();
-
-    // if a word matches the different headers then push the index to the list
-    for (index, &word) in words.iter().enumerate() {
-        match word {
-            NEUTRON_HEADER => {
-                frame_index.push(index as u32);
-                frame_types.push(1)
-            }
-            VETO_FRAME_HEADER => {
-                frame_index.push(index as u32);
-                frame_types.push(2)
-            }
-            SE_FRAME_HEADER => {
-                frame_index.push(index as u32);
-                frame_types.push(3)
-            }
-            _ => {}
-        }
-    }
-
-    // Vector of the bytes making up each frame
-    let mut frame_bytes: Vec<&str> = Vec::new();
-
-    // If no frames found return the empty Vec
-    if frame_index.is_empty() {
-        (frame_bytes, frame_types)
-    }
-    // If one frame found append entire UDP packet
-    else if frame_index.len() == 1 {
-        frame_bytes.push(udp_hex);
-        (frame_bytes, frame_types)
-    }
-    // multiple frames found, append each to the vec
-    else {
-        for i in (0..frame_index.len()).rev() {
-            // Do this backwards as removing Vec entries
-            if i == frame_index.len() - 1 {
-                // if data is the last frame found in the dataset
-                let hex = &udp_hex[(frame_index[i] * 8) as usize..udp_hex.len()];
-                if hex.len() >= 128 {
-                    // Check the frame is larger than a frame header
-                    frame_bytes.push(hex);
-                } else {
-                    frame_types.remove(i);
-                }
-            } else {
-                // for all other frames
-                let hex =
-                    &udp_hex[(frame_index[i] * 8) as usize..(frame_index[i + 1] * 8) as usize];
-                if hex.len() >= 128 {
-                    // Check the frame is larger than a frame header
-                    frame_bytes.push(hex);
-                } else {
-                    frame_types.remove(i);
-                }
-            }
-        }
-        frame_bytes.reverse(); // reverse the bytes vector as they were added in reverse
-        (frame_bytes, frame_types)
-    }
+/// Types of packets we may receive over UDP.
+enum UdpPacketType {
+    VetoFrame,
+    SampleEnvironment,
+    NeutronData,
 }
 
-/// Length of header packet
-const HEADER_LENGTH_BYTES: usize = 60;
-const HEADER_LENGTH_HEX_CHARS: usize = HEADER_LENGTH_BYTES * 2;
+/// A reference to a decoded UDP packet of a particular type.
+/// The slice referenced by `packet` contains a header, event data if applicable, and potentially
+/// trailing zeros.
+struct UdpPacket<'a> {
+    packet_type: UdpPacketType,
+    packet: &'a [u8],
+}
 
+/// Input: a slice of binary UDP data
+///
+/// Output: a vector of UDP packets; Each UDP message will be complete,
+/// i.e. containing the full UDP data for that message including all header bytes
+/// Vector will be empty if no frames found
+fn packet_to_frames(udp: &[u8]) -> Vec<UdpPacket<'_>> {
+    const MARKER: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF];
+    const VETO_FRAME_HEADER: &[u8] = &[0xFC, 0xFF, 0xFF, 0xFF];
+    const SE_FRAME_HEADER: &[u8] = &[0xFD, 0xFF, 0xFF, 0xFF];
+    const NEUTRON_HEADER: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF];
+
+    let mut packets = vec![];
+
+    let mut offset = 0;
+
+    while offset < udp.len() {
+        if udp.get(offset..offset + 4) != Some(MARKER) {
+            // Not a valid header start byte
+            offset += 1;
+        }
+        if let Some(header_bytes) = udp.get(offset..offset + HEADER_LEN_BYTES)
+            && let Some(header) = UdpHeaderView::new(header_bytes)
+        {
+            match udp.get(offset + 4..offset + 8) {
+                Some(NEUTRON_HEADER) => {
+                    let events_length_bytes = header.events_in_frame() as usize * 8; // 8 bytes per neutron event
+                    if let Some(packet) =
+                        udp.get(offset..offset + HEADER_LEN_BYTES + events_length_bytes)
+                    {
+                        packets.push(UdpPacket {
+                            packet_type: UdpPacketType::NeutronData,
+                            packet,
+                        });
+                        offset += HEADER_LEN_BYTES + events_length_bytes;
+                    } else {
+                        break; // Not enough UDP data compared to what header said there would be
+                    }
+                }
+                Some(VETO_FRAME_HEADER) => {
+                    packets.push(UdpPacket {
+                        packet_type: UdpPacketType::VetoFrame,
+                        packet: header_bytes,
+                    });
+                    offset += HEADER_LEN_BYTES;
+                }
+                Some(SE_FRAME_HEADER) => {
+                    packets.push(UdpPacket {
+                        packet_type: UdpPacketType::SampleEnvironment,
+                        packet: header_bytes,
+                    });
+                    offset += HEADER_LEN_BYTES;
+                }
+                _ => {
+                    // Unknown packet type
+                    offset += 1;
+                }
+            }
+        } else {
+            break; // Not enough bytes to be a valid UDP header
+        }
+    }
+
+    packets
+}
+
+/// Metadata retrieved from a frame header
 pub struct FrameHeader {
     pub events_in_frame: u32,
     pub frame_number: u32,
@@ -148,35 +144,31 @@ pub struct FrameHeader {
     pub total_ns: u64,
 }
 
+/// Input: a neutron event UDP packet, with header, events, and possibly padding zeros.
+/// Output: Vec of Flatbuffers-encoded messages to send to Kafka
 fn process_neutron_frame(
-    frame_udp: &str,
+    frame_udp: &[u8],
     src_ip: &str,
-    wiring_config: &Vec<WiringConfigRecord>,
+    wiring_config: &[WiringConfigRecord],
     ev44_fb_packets: &mut Vec<Vec<u8>>,
 ) {
-    let num_words = frame_udp.len() / 8;
-    let exp_events = (num_words - 15) / 2; // could be less if PCB has added padding Zeros
+    let num_words = frame_udp.len() / 4;
+    let exp_events = (num_words - 16) / 2; // could be less if PCB has added padding Zeros
 
-    let header = header_decoder(&frame_udp[0..HEADER_LENGTH_HEX_CHARS]);
+    let header = header_decoder(frame_udp);
 
-    let events_only_hex = &frame_udp[HEADER_LENGTH_HEX_CHARS..];
+    let events_to_proc = exp_events.min(header.events_in_frame as usize);
 
-    let mut events_to_proc = header.events_in_frame;
-    if events_to_proc > exp_events as u32 {
-        events_to_proc = exp_events as u32;
-        warn!(
-            "Its Been MELON'ED :( - More Events in FHeader than Packet Size - F: {} - P: {exp_events}",
-            header.events_in_frame
-        );
-    }
+    let event_data = &frame_udp[HEADER_LEN_BYTES..];
 
-    let mut tofs: Vec<u32> = Vec::new();
-    let mut det_ids: Vec<u32> = Vec::new();
+    let mut tofs: Vec<u32> = Vec::with_capacity(exp_events);
+    let mut det_ids: Vec<u32> = Vec::with_capacity(exp_events);
+
     let mut bldr = FlatBufferBuilder::new();
 
     // find IP address within the wiring config - get config line
     let mut packet_config_single: &WiringConfigRecord = wiring_config.first().unwrap();
-    let mut packet_config_multi: Vec<&WiringConfigRecord> = Vec::new();
+    let mut packet_config_multi: Vec<&WiringConfigRecord> = vec![];
 
     let mut num_matches = 0;
     for line in wiring_config {
@@ -192,15 +184,15 @@ fn process_neutron_frame(
         match packet_config_single.brd_type.as_str() {
             "PC3634M1S" => {
                 (tofs, det_ids) =
-                    process_pc3634m1_events(events_only_hex, packet_config_single, events_to_proc);
+                    process_pc3634m1_events(event_data, packet_config_single, events_to_proc);
             } // 128CH LVDS Card
             "PC3544MS" => {
                 (tofs, det_ids) =
-                    process_pc3544ms_events(events_only_hex, packet_config_multi, events_to_proc);
+                    process_pc3544ms_events(event_data, &packet_config_multi, events_to_proc);
             } // MADC PB
             "PC3877MS" => {
                 (tofs, det_ids) =
-                    process_pc3877ms_events(events_only_hex, packet_config_single, events_to_proc);
+                    process_pc3877ms_events(event_data, packet_config_single, events_to_proc);
             } // WLSF Streaming Electronics
             _ => {
                 warn!("MELON'ed -> Unable to PROC -> Unknown BRD Type");
@@ -220,244 +212,140 @@ fn process_neutron_frame(
 }
 
 fn process_pc3544ms_events(
-    events_hex: &str,
-    packet_config: Vec<&WiringConfigRecord>,
-    events_to_proc: u32,
+    event_data: &[u8],
+    packet_config: &[&WiringConfigRecord],
+    events_to_proc: usize,
 ) -> (Vec<u32>, Vec<u32>) {
-    let mut tofs: Vec<u32> = Vec::new();
-    let mut det_ids: Vec<u32> = Vec::new();
     match packet_config[0].packet_type.as_str() {
         "Position" => {
-            for event_i in 0..events_to_proc {
-                let addr = (event_i * 16) as usize;
-                let event_hex = &events_hex[addr..addr + 16];
-                let binary_event: &str = &hex_to_binary(event_hex);
-                let channel = u8::from_str_radix(&binary_event[35..38], 2).unwrap();
-                let event_position = u32::from_str_radix(&binary_event[52..64], 2).unwrap();
+            event_data
+                .chunks_exact(8)
+                .take(events_to_proc)
+                .filter_map(|event| {
+                    let channel = (event[4] >> 2) & 0b111; // Bits 26..=28
+                    let event_position =
+                        u32::from_be_bytes(event[4..8].try_into().unwrap()) & 0xFFF;
 
-                let mut channel_config: &WiringConfigRecord = packet_config.first().unwrap();
-                let mut matches = 0;
-                for possible_channel in &packet_config {
-                    if channel == possible_channel.ch {
-                        channel_config = possible_channel;
-                        matches += 1;
+                    if let Some(channel_config) = packet_config.iter().find(|c| c.ch == channel) {
+                        let detector_id = (event_position
+                            / (4096 / channel_config.mantid_detector_id_length))
+                            + channel_config.mantid_detector_id_start;
+
+                        let tof = u32::from_be_bytes(event[0..4].try_into().unwrap()) & 0xFFFFFF;
+
+                        Some((tof, detector_id))
+                    } else {
+                        None
                     }
-                }
-                if matches == 1 {
-                    let detector_id = (event_position
-                        / (4096 / channel_config.mantid_detector_id_length))
-                        + channel_config.mantid_detector_id_start;
-                    let event_tof = u32::from_str_radix(&event_hex[2..8], 16).unwrap();
-
-                    tofs.push(event_tof);
-                    det_ids.push(detector_id);
-                    trace!(
-                        "{event_i} - {event_hex} - TOF: {event_tof} - AdcCH: {channel} - VAL: {event_position} - DETID: {detector_id}"
-                    );
-                }
-            }
-            (tofs, det_ids)
+                })
+                .unzip()
         }
         "PulseHeight" => {
-            for event_i in 0..events_to_proc {
-                let addr = (event_i * 16) as usize;
-                let event_hex = &events_hex[addr..addr + 16];
-                let binary_event: &str = &hex_to_binary(event_hex);
-                let channel = u8::from_str_radix(&binary_event[35..38], 2).unwrap();
-                let event_pulse_height = u32::from_str_radix(&binary_event[40..52], 2).unwrap();
+            event_data
+                .chunks_exact(8)
+                .take(events_to_proc)
+                .filter_map(|event| {
+                    let channel = (event[4] >> 2) & 0b111; // Bits 26..=28
+                    let pulse_height =
+                        (u32::from_be_bytes(event[4..8].try_into().unwrap()) >> 12) & 0xFFF;
 
-                let mut channel_config: &WiringConfigRecord = packet_config.first().unwrap();
-                let mut matches = 0;
-                for possible_channel in &packet_config {
-                    if channel == possible_channel.ch {
-                        channel_config = possible_channel;
-                        matches += 1;
+                    if let Some(channel_config) = packet_config.iter().find(|c| c.ch == channel) {
+                        let detector_id = (pulse_height
+                            / (4096 / channel_config.mantid_detector_id_length))
+                            + channel_config.mantid_detector_id_start;
+                        let event_tof =
+                            u32::from_be_bytes(event[0..4].try_into().unwrap()) & 0xFFFFFF;
+
+                        Some((event_tof, detector_id))
+                    } else {
+                        None
                     }
-                }
-                if matches == 1 {
-                    let detector_id = (event_pulse_height
-                        / (4096 / channel_config.mantid_detector_id_length))
-                        + channel_config.mantid_detector_id_start;
-                    let event_tof = u32::from_str_radix(&event_hex[2..8], 16).unwrap();
-
-                    tofs.push(event_tof);
-                    det_ids.push(detector_id);
-                    trace!(
-                        "{event_i} - {event_hex} - TOF: {event_tof} - AdcCH: {channel} - VAL: {event_pulse_height} - DETID: {detector_id}"
-                    );
-                }
-            }
-            (tofs, det_ids)
+                })
+                .unzip()
         }
         _ => {
             error!("Unable to PROC -> Unknown stream type in config");
-            (tofs, det_ids)
+            (vec![], vec![])
         }
     }
 }
 
 fn process_pc3634m1_events(
-    events_hex: &str,
+    event_data: &[u8],
     packet_config: &WiringConfigRecord,
-    events_to_proc: u32,
+    events_to_proc: usize,
 ) -> (Vec<u32>, Vec<u32>) {
-    let mut tofs: Vec<u32> = Vec::new();
-    let mut det_ids: Vec<u32> = Vec::new();
-
     match packet_config.packet_type.as_str() {
-        "DIM_OUT" => {
-            for event_i in 0..events_to_proc {
-                let addr = (event_i * 16) as usize;
-                let event_hex = &events_hex[addr..addr + 16];
-
-                let event_tof = u32::from_str_radix(&event_hex[2..8], 16).unwrap();
-                let event_val = u32::from_str_radix(&event_hex[8..16], 16).unwrap();
-
-                let det_id = event_val + packet_config.mantid_detector_id_start;
-
-                tofs.push(event_tof);
-                det_ids.push(det_id);
-
-                trace!(
-                    "{event_i} - {event_hex} - TOF: {event_tof} - VAL: {event_val} - DETID: {det_id}"
-                );
-            }
-            (tofs, det_ids)
-        }
+        "DIM_OUT" => event_data
+            .chunks_exact(8)
+            .take(events_to_proc)
+            .map(|event| {
+                let tof = u32::from_be_bytes(event[0..4].try_into().unwrap()) & 0xFFFFFF;
+                let mut val = u32::from_be_bytes(event[4..8].try_into().unwrap());
+                val += packet_config.mantid_detector_id_start;
+                (tof, val)
+            })
+            .unzip(),
         _ => {
             error!("MELON'ed -> Unable to PROC -> Unknown stream type in config");
-            (tofs, det_ids)
+            (vec![], vec![])
         }
     }
 }
 
 fn process_pc3877ms_events(
-    events_hex: &str,
+    event_data: &[u8],
     packet_config: &WiringConfigRecord,
-    events_to_proc: u32,
+    events_to_proc: usize,
 ) -> (Vec<u32>, Vec<u32>) {
-    let mut tofs: Vec<u32> = Vec::with_capacity(events_to_proc as usize);
-    let mut det_ids: Vec<u32> = Vec::with_capacity(events_to_proc as usize);
+    const CLOCK_TICKS_TO_NS: u32 = 20;
+
     match packet_config.packet_type.as_str() {
-        "Position" => {
-            for event_i in 0..events_to_proc {
-                let addr = (event_i * 16) as usize;
-                let event_hex = &events_hex[addr..addr + 16];
-                let binary_event: &str = &hex_to_binary(event_hex);
-                let event_val = u32::from_str_radix(&binary_event[48..64], 2).unwrap();
+        "Position" => event_data
+            .chunks_exact(8)
+            .take(events_to_proc as usize)
+            .map(|event| {
+                let mut val = u32::from_be_bytes(event[4..8].try_into().unwrap()) & 0xFFFF;
+                val += packet_config.mantid_detector_id_start;
 
-                let event_tof = u32::from_str_radix(&event_hex[2..8], 16).unwrap() * 20;
-                let det_id = event_val + packet_config.mantid_detector_id_start;
+                let mut tof = u32::from_be_bytes(event[0..4].try_into().unwrap()) & 0xFFFFFF;
+                tof *= CLOCK_TICKS_TO_NS;
 
-                tofs.push(event_tof);
-                det_ids.push(det_id);
-            }
-            (tofs, det_ids)
-        }
-        "PulseHeight" => {
-            for event_i in 0..events_to_proc {
-                let addr = (event_i * 16) as usize;
-                let event_hex = &events_hex[addr..addr + 16];
-                let binary_event: &str = &hex_to_binary(event_hex);
-                let event_val = u32::from_str_radix(&binary_event[36..48], 2).unwrap();
+                (tof, val)
+            })
+            .unzip(),
+        "PulseHeight" => event_data
+            .chunks_exact(8)
+            .take(events_to_proc as usize)
+            .map(|event| {
+                let mut val = (u32::from_be_bytes(event[4..8].try_into().unwrap()) >> 12) & 0xFFF;
+                val += packet_config.mantid_detector_id_start;
 
-                let event_tof = u32::from_str_radix(&event_hex[2..8], 16).unwrap();
-                let det_id = event_val + packet_config.mantid_detector_id_start;
+                let tof = (u32::from_be_bytes(event[0..4].try_into().unwrap())) & 0xFFFFFF;
 
-                tofs.push(event_tof);
-                det_ids.push(det_id);
-            }
-            (tofs, det_ids)
-        }
+                (tof, val)
+            })
+            .unzip(),
         _ => {
             error!("MELON'ed -> Unable to PROC -> Unknown stream type in config");
-            (tofs, det_ids)
+            (vec![], vec![])
         }
     }
 }
 
 /// Decode a frame header
-pub fn header_decoder(header_udp: &str) -> FrameHeader {
-    // Uncomment to print the header words to terminal
-    // for i in 0..15{
-    //     println!("i{} {}:{} - {}", i+1, i*8, i*8+8, &header_udp[i*8..i*8+8]);
-    // }
-
-    // need to get
-    // - ifVeto
-    // - GPS time -> Format to nS since epoch
-    // - Period Number
-    // - Events in Frame
-
-    let frame_number = u32::from_str_radix(&header_udp[16..24], 16).unwrap();
-    let period_num = u16::from_str_radix(&header_udp[44..48], 16).unwrap();
-    let events_in_frame = u32::from_str_radix(&header_udp[48..56], 16).unwrap();
-    let ppp_in_frame = u16::from_str_radix(&header_udp[60..64], 16).unwrap();
-
-    // Get GPS Time
-    let bin_time: &str = &hex_to_binary(&header_udp[24..40]); // Get data as binary string
-
-    let years = u16::from_str_radix(&bin_time[0..8], 2).unwrap() + 2000;
-    let days = u32::from_str_radix(&bin_time[8..17], 2).unwrap();
-    let hours = u8::from_str_radix(&bin_time[17..22], 2).unwrap();
-    let mins = u8::from_str_radix(&bin_time[22..28], 2).unwrap();
-    let secs = u8::from_str_radix(&bin_time[28..34], 2).unwrap();
-    let m_secs = u16::from_str_radix(&bin_time[34..44], 2).unwrap();
-    let u_secs = u16::from_str_radix(&bin_time[44..54], 2).unwrap();
-    let n_secs = u64::from_str_radix(&bin_time[54..64], 2).unwrap();
-
-    // println!("F: {} - E: {} - PER: {} - PPP: {}", frame_number, events_in_frame, period_num, ppp_in_frame);
-    // println!("time: Y-{years}:D-{days}:H-{hours}:M-{mins}:S-{secs}:mS-{m_secs}:uS-{u_secs}:nS-{n_secs}");
-    // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-    // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-    // Need to add code to handle days = zero
-    // Currently this will cause the program to crash as it cannot convert the year + days to nS since epoch
-    // could just add a if statement for this
-    // probably better to read docs for from_yo_opt to see why
-    // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-    // -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-    let mut years_days_as_ns: u64 = 0;
-    if days != 0 {
-        // check if days if valid, if its zero the packet likely doesn't have a valid GPS timesource
-        #[allow(deprecated)] // To be fixed as per comment above
-        let datetime_again: DateTime<Utc> = DateTime::from_utc(
-            NaiveDateTime::from(NaiveDate::from_yo_opt(years as i32, days).unwrap()),
-            Utc,
-        );
-        years_days_as_ns = datetime_again.timestamp() as u64 * 1e9 as u64;
-    } else {
-        error!("MELON'ed - invalid days, set years/day to zero");
-    }
-
-    let hours_as_ns = hours as u64 * 3.6e12 as u64;
-    let mins_as_ns = mins as u64 * 6e10 as u64;
-    let secs_as_ns = secs as u64 * 1e9 as u64;
-    let m_secs_as_ns = m_secs as u64 * 1000000;
-    let u_secs_as_ns = u_secs as u64 * 1000;
-
-    let total_ns: u64 = n_secs
-        + u_secs_as_ns
-        + m_secs_as_ns
-        + secs_as_ns
-        + mins_as_ns
-        + hours_as_ns
-        + years_days_as_ns;
-
-    trace!(
-        "F: {} - E: {} - PER: {} - PPP: {} - TnS: {}",
-        frame_number, events_in_frame, period_num, ppp_in_frame, total_ns
-    );
-    trace!("time nS: {}", total_ns);
-
-    // let header_bytes = hex::decode(header_udp).expect("Invalid UDP bytes");
-    // let header = Header::new(&header_bytes);
+pub fn header_decoder(bytes: &[u8]) -> FrameHeader {
+    let header = UdpHeaderView::new(bytes).expect("Invalid UDP header");
 
     FrameHeader {
-        events_in_frame,
-        frame_number,
-        period_num,
-        ppp_in_frame,
-        total_ns,
+        events_in_frame: header.events_in_frame(),
+        frame_number: header.frame_number(),
+        period_num: header.period_number(),
+        ppp_in_frame: header.ppp_in_frame(),
+        total_ns: header
+            .gps_time()
+            .nanoseconds_since_epoch()
+            .expect("Invalid timestamp"),
     }
 }
 
@@ -491,41 +379,20 @@ fn encode_ev44(
     bldr.finished_data().to_vec()
 }
 
-fn hex_to_binary(hex: &str) -> String {
-    hex.chars().map(to_binary).collect()
-}
-
-fn to_binary(c: char) -> &'static str {
-    match c {
-        '0' => "0000",
-        '1' => "0001",
-        '2' => "0010",
-        '3' => "0011",
-        '4' => "0100",
-        '5' => "0101",
-        '6' => "0110",
-        '7' => "0111",
-        '8' => "1000",
-        '9' => "1001",
-        'a' => "1010",
-        'b' => "1011",
-        'c' => "1100",
-        'd' => "1101",
-        'e' => "1110",
-        'f' => "1111",
-        _ => "",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use isis_streaming_data_types::{DeserializedMessage, deserialize_message};
 
-    #[test]
-    fn test_hex_to_binary() {
-        assert_eq!(hex_to_binary("20af"), "0010000010101111");
-    }
+    /// A valid timestamp, encoded in the UDP packed format.
+    const VALID_TIMESTAMP: u64 = (26 << (32 + 24))
+        + (106 << (32 + 15))
+        + (17 << (32 + 10))
+        + (9 << (32 + 4))
+        + (35 << 30)
+        + (123 << 20)
+        + (456 << 10)
+        + (789);
 
     fn make_raw_udp_message(num_events: usize) -> Vec<u8> {
         // Note: 4-byte words
@@ -535,7 +402,7 @@ mod tests {
             .chain(&[255_u8; 4]) // Header word 1: neutron data header marker
             .chain(&[0_u8; 4]) // Header word 2: information
             .chain(&[0_u8; 4]) // Header word 3: frame number
-            .chain(&[0_u8; 8]) // Header words 4 & 5: GPS timestamp
+            .chain(&VALID_TIMESTAMP.to_be_bytes()) // Header words 4 & 5: GPS timestamp
             .chain(&[0_u8; 2]) // Header word 6: period number
             .chain(&[0_u8; 2]) // Header word 6: unused
             .chain(&(num_events as u32).to_be_bytes()) // Header word 7: events in frame
@@ -581,6 +448,41 @@ mod tests {
         assert_eq!(msgs.len(), 1);
         match deserialize_message(&msgs[0]) {
             Ok(DeserializedMessage::EventDataEv44(msg)) => {
+                assert_eq!(msg.reference_time().get(0), 1776359375123456789);
+                assert_eq!(msg.time_of_flight().unwrap().len(), 100);
+            }
+            _ => panic!("Could not deserialize"),
+        }
+    }
+
+
+    #[test]
+    fn test_decode_pc3877ms_with_padding_zeros() {
+        let num_events = 100;
+        // A valid message followed by 5000 meaningless padding zeros
+        let raw_data = make_raw_udp_message(num_events).into_iter().chain([0_u8; 5000].into_iter()).collect::<Vec<_>>();
+
+        let data = hex::encode(raw_data);
+
+        let wiring_config = vec![WiringConfigRecord {
+            brd_num: 0,
+            brd_ref: "WLSF0".to_owned(),
+            brd_type: "PC3877MS".to_owned(),
+            packet_type: "Position".to_owned(),
+            sw_pos: 0,
+            streaming_ip: "192.168.1.1".to_owned(),
+            ch: 0,
+            mantid_detector_id_start: 0,
+            mantid_detector_id_length: 1,
+            comment: "WLSF Module".to_owned(),
+        }];
+
+        let msgs = process_udp_to_kafka(&data, "192.168.1.1", &wiring_config);
+
+        assert_eq!(msgs.len(), 1);
+        match deserialize_message(&msgs[0]) {
+            Ok(DeserializedMessage::EventDataEv44(msg)) => {
+                assert_eq!(msg.reference_time().get(0), 1776359375123456789);
                 assert_eq!(msg.time_of_flight().unwrap().len(), 100);
             }
             _ => panic!("Could not deserialize"),
