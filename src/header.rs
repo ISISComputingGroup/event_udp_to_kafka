@@ -11,14 +11,11 @@ impl<'a> UdpHeaderView<'a> {
         (content.len() >= HEADER_LEN_BYTES).then_some(UdpHeaderView { content })
     }
 
-    pub fn word(&self, n: usize) -> [u8; 4] {
+    fn word(&self, n: usize) -> [u8; 4] {
+        assert!(n <= 15, "Invalid word requested from header");
         self.content[4 * n..4 * n + 4]
             .try_into()
-            .expect("content not a multiple of 4 bytes")
-    }
-
-    pub fn is_neutron_data_header(&self) -> bool {
-        self.word(0) == [0xFF, 0xFF, 0xFF, 0xFF] && self.word(1) == [0xFF, 0xFF, 0xFF, 0xFF]
+            .expect("slice of length 4")
     }
 
     pub fn frame_number(&self) -> u32 {
@@ -45,7 +42,7 @@ impl<'a> UdpHeaderView<'a> {
         GpsTime::from_packed_repr(u64::from_be_bytes(
             self.content[4 * 4..6 * 4]
                 .try_into()
-                .expect("content length was already checked"),
+                .expect("slice of length 8"),
         ))
     }
 }
@@ -56,7 +53,7 @@ mod tests {
 
     fn make_raw_udp_message(num_events: usize, ppp: u16, gps_time: u64) -> Vec<u8> {
         // Note: 4-byte words
-        // Total header length: 60 bytes (15 words)
+        // Total header length: 64 bytes (16 words)
         [255_u8; 4] // Header word 0: 'running' header marker
             .iter()
             .chain(&[255_u8; 4]) // Header word 1: neutron data header marker
@@ -84,7 +81,6 @@ mod tests {
         let msg = make_raw_udp_message(10, 23, 0);
         let header = UdpHeaderView::new(&msg).unwrap();
 
-        assert!(header.is_neutron_data_header());
         assert_eq!(header.events_in_frame(), 10);
         assert_eq!(header.ppp_in_frame(), 23);
     }

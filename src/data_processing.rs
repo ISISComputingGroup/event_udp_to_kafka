@@ -5,7 +5,8 @@ use flatbuffers::FlatBufferBuilder;
 use isis_streaming_data_types::flatbuffers_generated::events_ev44::{
     Event44Message, Event44MessageArgs, finish_event_44_message_buffer,
 };
-use log::{error, trace, warn};
+use itertools::Itertools;
+use log::{error, warn};
 
 /// Input: hexed string containing the data from a UDP packet (which may contain multiple
 /// event packets)
@@ -41,7 +42,12 @@ pub fn process_udp_bytes_to_kafka(
     for frame in frames {
         match frame.packet_type {
             UdpPacketType::NeutronData => {
-                process_neutron_frame(frame.packet, src_ip, wiring_config, &mut kafka_bytes);
+                let result =
+                    process_neutron_frame(frame.packet, src_ip, wiring_config, &mut kafka_bytes);
+                if let Err(e) = result {
+                    warn!("Error processing neutron data: {}", e);
+                    // todo: metrics
+                }
             }
             UdpPacketType::SampleEnvironment => {
                 todo!("Implement sample environment")
@@ -81,93 +87,85 @@ fn packet_to_frames(udp: &[u8]) -> Vec<UdpPacket<'_>> {
     const SE_FRAME_HEADER: &[u8] = &[0xFD, 0xFF, 0xFF, 0xFF];
     const NEUTRON_HEADER: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF];
 
-    let mut packets = vec![];
-
+    // Find the byte-offsets of the beginning of frame markers.
+    let mut marker_offsets = vec![];
     let mut offset = 0;
 
     while offset < udp.len() {
-        if udp.get(offset..offset + 4) != Some(MARKER) {
-            // Not a valid header start byte
-            offset += 1;
+        if udp.get(offset..offset + 4) == Some(&MARKER) {
+            marker_offsets.push(offset);
+            offset += HEADER_LEN_BYTES;
         }
-        if let Some(header_bytes) = udp.get(offset..offset + HEADER_LEN_BYTES)
-            && let Some(header) = UdpHeaderView::new(header_bytes)
+        offset += 4; // Advance by a 4-byte word each time.
+    }
+
+    // Last message can go up to end of data.
+    marker_offsets.push(udp.len());
+
+    let mut packets = vec![];
+
+    for (&start_inclusive, &end_exclusive) in marker_offsets.iter().tuple_windows() {
+        if let Some(msg) = udp.get(start_inclusive..end_exclusive)
+            && msg.len() >= HEADER_LEN_BYTES
         {
-            match udp.get(offset + 4..offset + 8) {
+            match msg.get(4..8) {
                 Some(NEUTRON_HEADER) => {
-                    let events_length_bytes = header.events_in_frame() as usize * 8; // 8 bytes per neutron event
-                    if let Some(packet) =
-                        udp.get(offset..offset + HEADER_LEN_BYTES + events_length_bytes)
-                    {
-                        packets.push(UdpPacket {
-                            packet_type: UdpPacketType::NeutronData,
-                            packet,
-                        });
-                        offset += HEADER_LEN_BYTES + events_length_bytes;
-                    } else {
-                        break; // Not enough UDP data compared to what header said there would be
-                    }
+                    packets.push(UdpPacket {
+                        packet_type: UdpPacketType::NeutronData,
+                        packet: msg,
+                    });
                 }
                 Some(VETO_FRAME_HEADER) => {
                     packets.push(UdpPacket {
                         packet_type: UdpPacketType::VetoFrame,
-                        packet: header_bytes,
+                        packet: msg,
                     });
-                    offset += HEADER_LEN_BYTES;
                 }
                 Some(SE_FRAME_HEADER) => {
                     packets.push(UdpPacket {
                         packet_type: UdpPacketType::SampleEnvironment,
-                        packet: header_bytes,
+                        packet: msg,
                     });
-                    offset += HEADER_LEN_BYTES;
                 }
                 _ => {
                     // Unknown packet type
-                    offset += 1;
                 }
             }
-        } else {
-            break; // Not enough bytes to be a valid UDP header
         }
     }
 
     packets
 }
 
-/// Metadata retrieved from a frame header
-pub struct FrameHeader {
-    pub events_in_frame: u32,
-    pub frame_number: u32,
-    pub period_num: u16,
-    pub ppp_in_frame: u16,
-    pub total_ns: u64,
-}
-
-/// Input: a neutron event UDP packet, with header, events, and possibly padding zeros.
+/// Input: a neutron event UDP packet, header, events, and possibly padding zeros.
 /// Output: Vec of Flatbuffers-encoded messages to send to Kafka
 fn process_neutron_frame(
     frame_udp: &[u8],
     src_ip: &str,
     wiring_config: &[WiringConfigRecord],
     ev44_fb_packets: &mut Vec<Vec<u8>>,
-) {
-    let num_words = frame_udp.len() / 4;
-    let exp_events = (num_words - 16) / 2; // could be less if PCB has added padding Zeros
+) -> Result<(), &'static str> {
+    let header = UdpHeaderView::new(frame_udp).ok_or("Invalid frame header; not long enough")?;
 
-    let header = header_decoder(frame_udp);
-
-    let events_to_proc = exp_events.min(header.events_in_frame as usize);
+    let nanoseconds_since_epoch = header
+        .gps_time()
+        .nanoseconds_since_epoch()
+        .ok_or("Invalid frame header; timestamp is invalid")?;
 
     let event_data = &frame_udp[HEADER_LEN_BYTES..];
 
-    let mut tofs: Vec<u32> = Vec::with_capacity(exp_events);
-    let mut det_ids: Vec<u32> = Vec::with_capacity(exp_events);
+    if event_data.len() % 8 != 0 {
+        return Err("Event data is not a multiple of pairs of 4-byte words");
+    }
+
+    let events_to_proc = event_data.len() / 8;
 
     let mut bldr = FlatBufferBuilder::new();
 
     // find IP address within the wiring config - get config line
-    let mut packet_config_single: &WiringConfigRecord = wiring_config.first().unwrap();
+    let mut packet_config_single: &WiringConfigRecord =
+        wiring_config.first().ok_or("Invalid wiring table")?;
+
     let mut packet_config_multi: Vec<&WiringConfigRecord> = vec![];
 
     let mut num_matches = 0;
@@ -181,34 +179,33 @@ fn process_neutron_frame(
 
     if num_matches >= 1 {
         // do we want this for LVDS or have if 1, else if greater than 1?
-        match packet_config_single.brd_type.as_str() {
+        let (tofs, det_ids) = match packet_config_single.brd_type.as_str() {
             "PC3634M1S" => {
-                (tofs, det_ids) =
-                    process_pc3634m1_events(event_data, packet_config_single, events_to_proc);
+                process_pc3634m1s_events(event_data, packet_config_single, events_to_proc)
             } // 128CH LVDS Card
-            "PC3544MS" => {
-                (tofs, det_ids) =
-                    process_pc3544ms_events(event_data, &packet_config_multi, events_to_proc);
-            } // MADC PB
-            "PC3877MS" => {
-                (tofs, det_ids) =
-                    process_pc3877ms_events(event_data, packet_config_single, events_to_proc);
-            } // WLSF Streaming Electronics
+            "PC3544MS" => process_pc3544ms_events(event_data, &packet_config_multi, events_to_proc), // MADC PB
+            "PC3877MS" => process_pc3877ms_events(event_data, packet_config_single, events_to_proc), // WLSF Streaming Electronics
             _ => {
-                warn!("MELON'ed -> Unable to PROC -> Unknown BRD Type");
+                return Err("Unknown board type");
             }
-        }
-        trace!("Dets: {:?}", det_ids);
-        trace!("TOFs: {:?}", tofs);
+        };
 
         if tofs.is_empty() {
-            warn!("MELON'ed -> no Events found within frame");
+            return Err("No events within frame");
         } else {
             // Trying with EV44 Packets
-            let fb_bytes = encode_ev44(&mut bldr, "rust_proc", 0, header.total_ns, &tofs, &det_ids);
+            let fb_bytes = encode_ev44(
+                &mut bldr,
+                "rust_proc",
+                0,
+                nanoseconds_since_epoch,
+                &tofs,
+                &det_ids,
+            );
             ev44_fb_packets.push(fb_bytes);
         }
     }
+    Ok(())
 }
 
 fn process_pc3544ms_events(
@@ -270,7 +267,7 @@ fn process_pc3544ms_events(
     }
 }
 
-fn process_pc3634m1_events(
+fn process_pc3634m1s_events(
     event_data: &[u8],
     packet_config: &WiringConfigRecord,
     events_to_proc: usize,
@@ -318,7 +315,7 @@ fn process_pc3877ms_events(
             .chunks_exact(8)
             .take(events_to_proc as usize)
             .map(|event| {
-                let mut val = (u32::from_be_bytes(event[4..8].try_into().unwrap()) >> 12) & 0xFFF;
+                let mut val = (u32::from_be_bytes(event[4..8].try_into().unwrap()) >> 16) & 0xFFF;
                 val += packet_config.mantid_detector_id_start;
 
                 let tof = (u32::from_be_bytes(event[0..4].try_into().unwrap())) & 0xFFFFFF;
@@ -330,22 +327,6 @@ fn process_pc3877ms_events(
             error!("MELON'ed -> Unable to PROC -> Unknown stream type in config");
             (vec![], vec![])
         }
-    }
-}
-
-/// Decode a frame header
-pub fn header_decoder(bytes: &[u8]) -> FrameHeader {
-    let header = UdpHeaderView::new(bytes).expect("Invalid UDP header");
-
-    FrameHeader {
-        events_in_frame: header.events_in_frame(),
-        frame_number: header.frame_number(),
-        period_num: header.period_number(),
-        ppp_in_frame: header.ppp_in_frame(),
-        total_ns: header
-            .gps_time()
-            .nanoseconds_since_epoch()
-            .expect("Invalid timestamp"),
     }
 }
 
@@ -394,9 +375,9 @@ mod tests {
         + (456 << 10)
         + (789);
 
-    fn make_raw_udp_message(num_events: usize) -> Vec<u8> {
+    fn make_raw_udp_header(num_events: usize) -> Vec<u8> {
         // Note: 4-byte words
-        // Total header length: 60 bytes (15 words)
+        // Total header length: 64 bytes (16 words)
         [255_u8; 4] // Header word 0: 'running' header marker
             .iter()
             .chain(&[255_u8; 4]) // Header word 1: neutron data header marker
@@ -415,15 +396,17 @@ mod tests {
             .chain(&[0_u8; 4]) // Header word 13: not used
             .chain(&[0_u8; 4]) // Header word 14: not used
             .chain(&[0_u8; 4]) // Header word 15: not used
-            .chain(&vec![0_u8; num_events * 8]) // 8-byte event messages
             .copied()
             .collect()
     }
 
     #[test]
-    fn test_decode_pc3877ms() {
+    fn test_process_pc3877ms_events() {
         let num_events = 100;
-        let raw_data = make_raw_udp_message(num_events);
+        let mut raw_data = make_raw_udp_header(num_events);
+
+        raw_data.extend_from_slice(&vec![0_u8; num_events * 8]); // 8-byte event messages
+
         let n_bytes = raw_data.len();
 
         assert_eq!(n_bytes, 64 + num_events * 8);
@@ -440,7 +423,7 @@ mod tests {
             ch: 0,
             mantid_detector_id_start: 0,
             mantid_detector_id_length: 1,
-            comment: "WLSF Module".to_owned(),
+            comment: "".to_owned(),
         }];
 
         let msgs = process_udp_to_kafka(&data, "192.168.1.1", &wiring_config);
@@ -455,26 +438,68 @@ mod tests {
         }
     }
 
-
     #[test]
-    fn test_decode_pc3877ms_with_padding_zeros() {
+    fn test_process_pc3544ms_events() {
         let num_events = 100;
-        // A valid message followed by 5000 meaningless padding zeros
-        let raw_data = make_raw_udp_message(num_events).into_iter().chain([0_u8; 5000].into_iter()).collect::<Vec<_>>();
+        let mut raw_data = make_raw_udp_header(num_events);
+
+        raw_data.extend_from_slice(&vec![0_u8; num_events * 8]); // 8-byte event messages
+
+        let n_bytes = raw_data.len();
+
+        assert_eq!(n_bytes, 64 + num_events * 8);
 
         let data = hex::encode(raw_data);
 
         let wiring_config = vec![WiringConfigRecord {
             brd_num: 0,
             brd_ref: "WLSF0".to_owned(),
-            brd_type: "PC3877MS".to_owned(),
+            brd_type: "PC3544MS".to_owned(),
             packet_type: "Position".to_owned(),
             sw_pos: 0,
             streaming_ip: "192.168.1.1".to_owned(),
             ch: 0,
             mantid_detector_id_start: 0,
             mantid_detector_id_length: 1,
-            comment: "WLSF Module".to_owned(),
+            comment: "".to_owned(),
+        }];
+
+        let msgs = process_udp_to_kafka(&data, "192.168.1.1", &wiring_config);
+
+        assert_eq!(msgs.len(), 1);
+        match deserialize_message(&msgs[0]) {
+            Ok(DeserializedMessage::EventDataEv44(msg)) => {
+                assert_eq!(msg.reference_time().get(0), 1776359375123456789);
+                assert_eq!(msg.time_of_flight().unwrap().len(), 100);
+            }
+            _ => panic!("Could not deserialize"),
+        }
+    }
+
+    #[test]
+    fn test_process_pc3634m1s_events() {
+        let num_events = 100;
+        let mut raw_data = make_raw_udp_header(num_events);
+
+        raw_data.extend_from_slice(&vec![0_u8; num_events * 8]); // 8-byte event messages
+
+        let n_bytes = raw_data.len();
+
+        assert_eq!(n_bytes, 64 + num_events * 8);
+
+        let data = hex::encode(raw_data);
+
+        let wiring_config = vec![WiringConfigRecord {
+            brd_num: 0,
+            brd_ref: "WLSF0".to_owned(),
+            brd_type: "PC3634M1S".to_owned(),
+            packet_type: "DIM_OUT".to_owned(),
+            sw_pos: 0,
+            streaming_ip: "192.168.1.1".to_owned(),
+            ch: 0,
+            mantid_detector_id_start: 0,
+            mantid_detector_id_length: 1,
+            comment: "".to_owned(),
         }];
 
         let msgs = process_udp_to_kafka(&data, "192.168.1.1", &wiring_config);

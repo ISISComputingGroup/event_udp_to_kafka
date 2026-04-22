@@ -44,9 +44,9 @@ fn benchmark_message_processing(c: &mut Criterion) {
     let data = hex::encode(raw_data);
 
     let mut group = c.benchmark_group("message_processing");
-    group.throughput(Throughput::Bits(n_bytes as u64 * 8));
+    group.throughput(Throughput::Bytes(n_bytes as u64));
 
-    for board_type in ["PC3877MS", "PC3544MS", "PC3634M1"] {
+    for board_type in ["PC3877MS", "PC3544MS", "PC3634M1S"] {
         let wiring_config = vec![WiringConfigRecord {
             brd_num: 0,
             brd_ref: "WLSF0".to_owned(),
