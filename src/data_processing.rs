@@ -300,13 +300,13 @@ fn process_pc3877ms_events(
     match packet_config.packet_type.as_str() {
         "Position" => event_data
             .chunks_exact(8)
-            .take(events_to_proc as usize)
+            .take(events_to_proc)
             .map(|event| {
-                let mut val = u32::from_be_bytes(event[4..8].try_into().unwrap()) & 0xFFFF;
-                val += packet_config.mantid_detector_id_start;
-
                 let mut tof = u32::from_be_bytes(event[0..4].try_into().unwrap()) & 0xFFFFFF;
                 tof *= CLOCK_TICKS_TO_NS;
+
+                let mut val = u32::from_be_bytes(event[4..8].try_into().unwrap()) & 0xFFFF;
+                val += packet_config.mantid_detector_id_start;
 
                 (tof, val)
             })
@@ -400,12 +400,22 @@ mod tests {
             .collect()
     }
 
+    /// tof = 456000 ns
+    /// val = 123
+    fn make_pc3877ms_event() -> Vec<u8> {
+        vec![
+            0xFF, 0, 89, 16,  // 20ns (scaling) * (89 * 256 + 16) = 456000ns
+            0xFF, 0xFF, 0, 123, // Position 123
+        ]
+    }
+
     #[test]
     fn test_process_pc3877ms_events() {
-        let num_events = 100;
+        let num_events = 2;
         let mut raw_data = make_raw_udp_header(num_events);
 
-        raw_data.extend_from_slice(&vec![0_u8; num_events * 8]); // 8-byte event messages
+        raw_data.extend_from_slice(&make_pc3877ms_event());
+        raw_data.extend_from_slice(&make_pc3877ms_event());
 
         let n_bytes = raw_data.len();
 
@@ -432,18 +442,35 @@ mod tests {
         match deserialize_message(&msgs[0]) {
             Ok(DeserializedMessage::EventDataEv44(msg)) => {
                 assert_eq!(msg.reference_time().get(0), 1776359375123456789);
-                assert_eq!(msg.time_of_flight().unwrap().len(), 100);
+                assert_eq!(msg.time_of_flight().unwrap().len(), 2);
+
+                assert_eq!(msg.time_of_flight().unwrap().get(0), 456000);
+                assert_eq!(msg.time_of_flight().unwrap().get(1), 456000);
+
+                assert_eq!(msg.pixel_id().unwrap().get(0), 123);
+                assert_eq!(msg.pixel_id().unwrap().get(1), 123);
+
             }
             _ => panic!("Could not deserialize"),
         }
     }
 
+    /// tof = 456000 ns
+    /// channel 2, position 1234
+    fn make_pc3544ms_event() -> Vec<u8> {
+        vec![
+            0xFF, 0x06, 0xF5, 0x40,  // 456000ns
+            0b11101011, 0xFF, 0xF4, 0xD2, // Channel 2 (b010), 0x4D2 = position 1234
+        ]
+    }
+
     #[test]
     fn test_process_pc3544ms_events() {
-        let num_events = 100;
+        let num_events = 2;
         let mut raw_data = make_raw_udp_header(num_events);
 
-        raw_data.extend_from_slice(&vec![0_u8; num_events * 8]); // 8-byte event messages
+        raw_data.extend_from_slice(&make_pc3544ms_event());
+        raw_data.extend_from_slice(&make_pc3544ms_event());
 
         let n_bytes = raw_data.len();
 
@@ -458,9 +485,9 @@ mod tests {
             packet_type: "Position".to_owned(),
             sw_pos: 0,
             streaming_ip: "192.168.1.1".to_owned(),
-            ch: 0,
-            mantid_detector_id_start: 0,
-            mantid_detector_id_length: 1,
+            ch: 2,
+            mantid_detector_id_start: 11103001,
+            mantid_detector_id_length: 256,
             comment: "".to_owned(),
         }];
 
@@ -470,7 +497,13 @@ mod tests {
         match deserialize_message(&msgs[0]) {
             Ok(DeserializedMessage::EventDataEv44(msg)) => {
                 assert_eq!(msg.reference_time().get(0), 1776359375123456789);
-                assert_eq!(msg.time_of_flight().unwrap().len(), 100);
+                assert_eq!(msg.time_of_flight().unwrap().len(), 2);
+
+                assert_eq!(msg.time_of_flight().unwrap().get(0), 456000);
+                assert_eq!(msg.time_of_flight().unwrap().get(1), 456000);
+
+                assert_eq!(msg.pixel_id().unwrap().get(0), 11103001 + 77);
+                assert_eq!(msg.pixel_id().unwrap().get(1), 11103001 + 77);
             }
             _ => panic!("Could not deserialize"),
         }
@@ -478,7 +511,7 @@ mod tests {
 
     #[test]
     fn test_process_pc3634m1s_events() {
-        let num_events = 100;
+        let num_events = 2;
         let mut raw_data = make_raw_udp_header(num_events);
 
         raw_data.extend_from_slice(&vec![0_u8; num_events * 8]); // 8-byte event messages
@@ -508,7 +541,7 @@ mod tests {
         match deserialize_message(&msgs[0]) {
             Ok(DeserializedMessage::EventDataEv44(msg)) => {
                 assert_eq!(msg.reference_time().get(0), 1776359375123456789);
-                assert_eq!(msg.time_of_flight().unwrap().len(), 100);
+                assert_eq!(msg.time_of_flight().unwrap().len(), 2);
             }
             _ => panic!("Could not deserialize"),
         }
