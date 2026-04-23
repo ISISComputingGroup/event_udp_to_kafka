@@ -40,6 +40,7 @@ build_debug:
   script:
     - echo "Build Release start - make env file with CI_JOB_ID for release step"
     - echo BUILD_JOB_ID=$CI_JOB_ID >> CI_JOB_ID.env
+    - cargo test
     - cargo build
     - ls
   artifacts:
@@ -65,6 +66,7 @@ build_release:
   script:
     - echo "Build Release start - make env file with CI_JOB_ID for release step"
     - echo BUILD_JOB_ID=$CI_JOB_ID >> CI_JOB_ID.env
+    - cargo test --release
     - cargo build --release
     - ls
   artifacts:
@@ -88,7 +90,6 @@ test_clippy:
   script:
     - rustup component add clippy                        # Install Clippy linter
     - cargo clippy -- -D warnings                       # Run Clippy and treat warnings as errors
-  allow_failure: true                                    # Allow linting failures (can be improved over time)
 
 # Check code formatting
 test_format:
