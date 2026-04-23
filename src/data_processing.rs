@@ -50,10 +50,10 @@ pub fn process_udp_bytes_to_kafka(
                 }
             }
             UdpPacketType::SampleEnvironment => {
-                todo!("Implement sample environment")
+                warn!("Received unimplemented sample environment packet");
             }
             UdpPacketType::VetoFrame => {
-                todo!("Implement veto frame")
+                warn!("Received unimplemented veto packet");
             }
         }
     }
@@ -69,8 +69,7 @@ enum UdpPacketType {
 }
 
 /// A reference to a decoded UDP packet of a particular type.
-/// The slice referenced by `packet` contains a header, event data if applicable, and potentially
-/// trailing zeros.
+/// The slice referenced by `packet` contains a header, and event data if applicable.
 struct UdpPacket<'a> {
     packet_type: UdpPacketType,
     packet: &'a [u8],
@@ -92,14 +91,14 @@ fn packet_to_frames(udp: &[u8]) -> Vec<UdpPacket<'_>> {
     let mut offset = 0;
 
     while offset < udp.len() {
-        if udp.get(offset..offset + 4) == Some(&MARKER) {
+        if udp.get(offset..offset + 4) == Some(MARKER) {
             marker_offsets.push(offset);
             offset += HEADER_LEN_BYTES;
         }
         offset += 4; // Advance by a 4-byte word each time.
     }
 
-    // Last message can go up to end of data.
+    // Last message goes up to end of data.
     marker_offsets.push(udp.len());
 
     let mut packets = vec![];
@@ -129,6 +128,7 @@ fn packet_to_frames(udp: &[u8]) -> Vec<UdpPacket<'_>> {
                 }
                 _ => {
                     // Unknown packet type
+                    warn!("Unknown packet type: {:?}", msg.get(4..8));
                 }
             }
         }
@@ -154,70 +154,54 @@ fn process_neutron_frame(
 
     let event_data = &frame_udp[HEADER_LEN_BYTES..];
 
-    if event_data.len() % 8 != 0 {
+    if !event_data.len().is_multiple_of(8) {
         return Err("Event data is not a multiple of pairs of 4-byte words");
     }
 
-    let events_to_proc = event_data.len() / 8;
-
     let mut bldr = FlatBufferBuilder::new();
 
-    // find IP address within the wiring config - get config line
-    let mut packet_config_single: &WiringConfigRecord =
-        wiring_config.first().ok_or("Invalid wiring table")?;
+    let packet_config = wiring_config
+        .iter()
+        .filter(|line| line.streaming_ip == src_ip)
+        .collect::<Vec<&WiringConfigRecord>>();
 
-    let mut packet_config_multi: Vec<&WiringConfigRecord> = vec![];
+    let first_packet_config = packet_config.first().ok_or("no packet config")?;
 
-    let mut num_matches = 0;
-    for line in wiring_config {
-        if src_ip == line.streaming_ip {
-            num_matches += 1;
-            packet_config_single = line;
-            packet_config_multi.push(line);
+    // do we want this for LVDS or have if 1, else if greater than 1?
+    let (tofs, det_ids) = match first_packet_config.brd_type.as_str() {
+        "PC3634M1S" => process_pc3634m1s_events(event_data, first_packet_config), // 128CH LVDS Card
+        "PC3544MS" => process_pc3544ms_events(event_data, &packet_config),        // MADC PB
+        "PC3877MS" => process_pc3877ms_events(event_data, first_packet_config), // WLSF Streaming Electronics
+        _ => {
+            return Err("Unknown board type");
         }
+    };
+
+    if tofs.is_empty() {
+        return Err("No events within frame");
     }
 
-    if num_matches >= 1 {
-        // do we want this for LVDS or have if 1, else if greater than 1?
-        let (tofs, det_ids) = match packet_config_single.brd_type.as_str() {
-            "PC3634M1S" => {
-                process_pc3634m1s_events(event_data, packet_config_single, events_to_proc)
-            } // 128CH LVDS Card
-            "PC3544MS" => process_pc3544ms_events(event_data, &packet_config_multi, events_to_proc), // MADC PB
-            "PC3877MS" => process_pc3877ms_events(event_data, packet_config_single, events_to_proc), // WLSF Streaming Electronics
-            _ => {
-                return Err("Unknown board type");
-            }
-        };
-
-        if tofs.is_empty() {
-            return Err("No events within frame");
-        } else {
-            // Trying with EV44 Packets
-            let fb_bytes = encode_ev44(
-                &mut bldr,
-                "rust_proc",
-                0,
-                nanoseconds_since_epoch,
-                &tofs,
-                &det_ids,
-            );
-            ev44_fb_packets.push(fb_bytes);
-        }
-    }
+    // Trying with EV44 Packets
+    let fb_bytes = encode_ev44(
+        &mut bldr,
+        "rust_proc",
+        0,
+        nanoseconds_since_epoch,
+        &tofs,
+        &det_ids,
+    );
+    ev44_fb_packets.push(fb_bytes);
     Ok(())
 }
 
 fn process_pc3544ms_events(
     event_data: &[u8],
     packet_config: &[&WiringConfigRecord],
-    events_to_proc: usize,
 ) -> (Vec<u32>, Vec<u32>) {
     match packet_config[0].packet_type.as_str() {
         "Position" => {
             event_data
                 .chunks_exact(8)
-                .take(events_to_proc)
                 .filter_map(|event| {
                     let channel = (event[4] >> 2) & 0b111; // Bits 26..=28
                     let event_position =
@@ -240,7 +224,6 @@ fn process_pc3544ms_events(
         "PulseHeight" => {
             event_data
                 .chunks_exact(8)
-                .take(events_to_proc)
                 .filter_map(|event| {
                     let channel = (event[4] >> 2) & 0b111; // Bits 26..=28
                     let pulse_height =
@@ -261,7 +244,7 @@ fn process_pc3544ms_events(
                 .unzip()
         }
         _ => {
-            error!("Unable to PROC -> Unknown stream type in config");
+            error!("Unable to process events: unknown stream type in config");
             (vec![], vec![])
         }
     }
@@ -270,12 +253,10 @@ fn process_pc3544ms_events(
 fn process_pc3634m1s_events(
     event_data: &[u8],
     packet_config: &WiringConfigRecord,
-    events_to_proc: usize,
 ) -> (Vec<u32>, Vec<u32>) {
     match packet_config.packet_type.as_str() {
         "DIM_OUT" => event_data
             .chunks_exact(8)
-            .take(events_to_proc)
             .map(|event| {
                 let tof = u32::from_be_bytes(event[0..4].try_into().unwrap()) & 0xFFFFFF;
                 let mut val = u32::from_be_bytes(event[4..8].try_into().unwrap());
@@ -284,7 +265,7 @@ fn process_pc3634m1s_events(
             })
             .unzip(),
         _ => {
-            error!("MELON'ed -> Unable to PROC -> Unknown stream type in config");
+            error!("Unable to process events: unknown stream type in config");
             (vec![], vec![])
         }
     }
@@ -293,14 +274,12 @@ fn process_pc3634m1s_events(
 fn process_pc3877ms_events(
     event_data: &[u8],
     packet_config: &WiringConfigRecord,
-    events_to_proc: usize,
 ) -> (Vec<u32>, Vec<u32>) {
     const CLOCK_TICKS_TO_NS: u32 = 20;
 
     match packet_config.packet_type.as_str() {
         "Position" => event_data
             .chunks_exact(8)
-            .take(events_to_proc)
             .map(|event| {
                 let mut tof = u32::from_be_bytes(event[0..4].try_into().unwrap()) & 0xFFFFFF;
                 tof *= CLOCK_TICKS_TO_NS;
@@ -313,7 +292,6 @@ fn process_pc3877ms_events(
             .unzip(),
         "PulseHeight" => event_data
             .chunks_exact(8)
-            .take(events_to_proc as usize)
             .map(|event| {
                 let mut val = (u32::from_be_bytes(event[4..8].try_into().unwrap()) >> 16) & 0xFFF;
                 val += packet_config.mantid_detector_id_start;
@@ -324,7 +302,7 @@ fn process_pc3877ms_events(
             })
             .unzip(),
         _ => {
-            error!("MELON'ed -> Unable to PROC -> Unknown stream type in config");
+            error!("Unable to process events: unknown stream type in config");
             (vec![], vec![])
         }
     }
@@ -404,7 +382,7 @@ mod tests {
     /// val = 123
     fn make_pc3877ms_event() -> Vec<u8> {
         vec![
-            0xFF, 0, 89, 16,  // 20ns (scaling) * (89 * 256 + 16) = 456000ns
+            0xFF, 0, 89, 16, // 20ns (scaling) * (89 * 256 + 16) = 456000ns
             0xFF, 0xFF, 0, 123, // Position 123
         ]
     }
@@ -449,7 +427,6 @@ mod tests {
 
                 assert_eq!(msg.pixel_id().unwrap().get(0), 123);
                 assert_eq!(msg.pixel_id().unwrap().get(1), 123);
-
             }
             _ => panic!("Could not deserialize"),
         }
@@ -459,7 +436,7 @@ mod tests {
     /// channel 2, position 1234
     fn make_pc3544ms_event() -> Vec<u8> {
         vec![
-            0xFF, 0x06, 0xF5, 0x40,  // 456000ns
+            0xFF, 0x06, 0xF5, 0x40, // 456000ns
             0b11101011, 0xFF, 0xF4, 0xD2, // Channel 2 (b010), 0x4D2 = position 1234
         ]
     }
@@ -509,12 +486,22 @@ mod tests {
         }
     }
 
+    /// tof = 456000 ns
+    /// detector ID = 123456789
+    fn make_pc3634m1s_event() -> Vec<u8> {
+        vec![
+            0xFF, 0x06, 0xF5, 0x40, // 456000ns
+            0x07, 0x5B, 0xCD, 0x15, // Detector ID = 123456789
+        ]
+    }
+
     #[test]
     fn test_process_pc3634m1s_events() {
         let num_events = 2;
         let mut raw_data = make_raw_udp_header(num_events);
 
-        raw_data.extend_from_slice(&vec![0_u8; num_events * 8]); // 8-byte event messages
+        raw_data.extend_from_slice(&make_pc3634m1s_event());
+        raw_data.extend_from_slice(&make_pc3634m1s_event());
 
         let n_bytes = raw_data.len();
 
@@ -542,6 +529,12 @@ mod tests {
             Ok(DeserializedMessage::EventDataEv44(msg)) => {
                 assert_eq!(msg.reference_time().get(0), 1776359375123456789);
                 assert_eq!(msg.time_of_flight().unwrap().len(), 2);
+
+                assert_eq!(msg.time_of_flight().unwrap().get(0), 456000);
+                assert_eq!(msg.time_of_flight().unwrap().get(1), 456000);
+
+                assert_eq!(msg.pixel_id().unwrap().get(0), 123456789);
+                assert_eq!(msg.pixel_id().unwrap().get(1), 123456789);
             }
             _ => panic!("Could not deserialize"),
         }
