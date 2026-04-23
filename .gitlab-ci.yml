@@ -105,7 +105,6 @@ test_format:
   script:
     - rustup component add rustfmt                       # Install Rust formatter
     - cargo fmt -- --check                              # Check if code is properly formatted
-  allow_failure: true                                    # Allow formatting failures (can be improved over time)
 
 
 
