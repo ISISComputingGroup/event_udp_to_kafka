@@ -2,15 +2,18 @@ use crate::gps_time::GpsTime;
 
 pub const HEADER_LEN_BYTES: usize = 16 * 4; // 16 4-byte words
 
+/// View onto a UDP header byte-slice.
 pub struct UdpHeaderView<'a> {
     content: &'a [u8],
 }
 
 impl<'a> UdpHeaderView<'a> {
+    /// Create a new view onto a UDP header, if the slice is long enough to contain a header.
     pub fn new(content: &[u8]) -> Option<UdpHeaderView<'_>> {
         (content.len() >= HEADER_LEN_BYTES).then_some(UdpHeaderView { content })
     }
 
+    /// Extract a single word from the header
     fn word(&self, n: usize) -> [u8; 4] {
         assert!(n <= 15, "Invalid word requested from header");
         self.content[4 * n..4 * n + 4]

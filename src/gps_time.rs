@@ -1,10 +1,24 @@
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 
+/// 8-byte packed representation of a GPS Timestamp, in the format streamed in UDP headers.
+///
+/// Data is big-endian and packed into two 4-byte words.
+///
+/// Word 1:
+///   Years: bits 24..=31 (as offset from year 2000)
+///   Days: bits 15..=23
+///   Hours: bits 10..=14
+///   Minutes: bits 4..=9
+///   Seconds (most significant bits): bits 0..=3
+/// Word 2:
+///   Seconds (least significant bits): bits 30..=31
+///   Milliseconds: bits 20..=29
+///   Microseconds: bits 10..=19
+///   Nanoseconds: bits 0..=9
 pub struct GpsTime {
     content: u64,
 }
 
-// 8-byte GPS timestamp in the streamed packet format
 impl GpsTime {
     pub fn from_packed_repr(packed_repr: u64) -> GpsTime {
         GpsTime {
@@ -44,6 +58,9 @@ impl GpsTime {
         self.content & 0b1111111111 // 10 bits
     }
 
+    /// Represent this timestamp as an offset in nanoseconds since the Unix epoch.
+    ///
+    /// Returns None if the GPS timestamp was invalid, for example if days=0.
     pub fn nanoseconds_since_epoch(&self) -> Option<u64> {
         const NANOS_PER_SEC: u64 = 1_000_000_000;
 
