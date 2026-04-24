@@ -1,27 +1,27 @@
 use crate::gps_time::GpsTime;
 
 pub const HEADER_MARKER: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF];
-pub const VETO_FRAME_HEADER: &[u8] = &[0xFC, 0xFF, 0xFF, 0xFF];
-pub const SE_FRAME_HEADER: &[u8] = &[0xFD, 0xFF, 0xFF, 0xFF];
-pub const NEUTRON_HEADER: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF];
+const VETO_FRAME_HEADER: &[u8; 4] = &[0xFC, 0xFF, 0xFF, 0xFF];
+const SE_FRAME_HEADER: &[u8; 4] = &[0xFD, 0xFF, 0xFF, 0xFF];
+const NEUTRON_HEADER: &[u8; 4] = &[0xFF, 0xFF, 0xFF, 0xFF];
 
 pub const HEADER_LEN_BYTES: usize = 16 * 4; // 16 4-byte words
 
 /// View onto a UDP message byte-slice.
-pub struct UdpHeaderView<'a> {
+pub struct UdpMessageView<'a> {
     content: &'a [u8],
 }
 
-impl<'a> UdpHeaderView<'a> {
-    /// Create a new view onto a UDP header, if the slice is long enough to contain a header and
+impl<'a> UdpMessageView<'a> {
+    /// Create a new view onto a UDP message, if the slice is long enough to contain a header and
     /// starts with a header marker.
-    pub fn new(content: &[u8]) -> Option<UdpHeaderView<'_>> {
+    pub fn new(content: &[u8]) -> Option<UdpMessageView<'_>> {
         (content.len() >= HEADER_LEN_BYTES && content.starts_with(HEADER_MARKER))
-            .then_some(UdpHeaderView { content })
+            .then_some(UdpMessageView { content })
     }
 
     /// Extract a single word from the header
-    fn word(&self, n: usize) -> [u8; 4] {
+    fn header_word(&self, n: usize) -> [u8; 4] {
         assert!(n <= 15, "Invalid word requested from header");
         self.content[4 * n..4 * n + 4]
             .try_into()
@@ -29,23 +29,23 @@ impl<'a> UdpHeaderView<'a> {
     }
 
     pub fn frame_number(&self) -> u32 {
-        u32::from_be_bytes(self.word(3))
+        u32::from_be_bytes(self.header_word(3))
     }
 
     pub fn events_in_frame(&self) -> u32 {
-        u32::from_be_bytes(self.word(7))
+        u32::from_be_bytes(self.header_word(7))
     }
 
     pub fn ppp_in_frame(&self) -> u16 {
-        u16::from_be_bytes(self.word(8)[0..2].try_into().unwrap())
+        u16::from_be_bytes(self.header_word(8)[0..2].try_into().unwrap())
     }
 
     pub fn vetoes(&self) -> u16 {
-        u16::from_be_bytes(self.word(9)[0..2].try_into().unwrap())
+        u16::from_be_bytes(self.header_word(9)[0..2].try_into().unwrap())
     }
 
     pub fn period_number(&self) -> u16 {
-        u16::from_be_bytes(self.word(6)[0..2].try_into().unwrap())
+        u16::from_be_bytes(self.header_word(6)[0..2].try_into().unwrap())
     }
 
     pub fn gps_time(&self) -> GpsTime {
@@ -55,6 +55,29 @@ impl<'a> UdpHeaderView<'a> {
                 .expect("slice of length 8"),
         ))
     }
+
+    pub fn packet_type(&self) -> Option<UdpPacketType> {
+        match &self.header_word(1) {
+            NEUTRON_HEADER => Some(UdpPacketType::NeutronData),
+            VETO_FRAME_HEADER => Some(UdpPacketType::VetoFrame),
+            SE_FRAME_HEADER => Some(UdpPacketType::SampleEnvironment),
+            _ => None,
+        }
+    }
+
+    /// Get the non-header bytes from this message.
+    ///
+    /// For neutron frames, these bytes contain the neutron event data.
+    pub fn event_data_bytes(&self) -> &[u8] {
+        &self.content[HEADER_LEN_BYTES..]
+    }
+}
+
+/// Types of packets we may receive over UDP.
+pub enum UdpPacketType {
+    VetoFrame,
+    SampleEnvironment,
+    NeutronData,
 }
 
 #[cfg(test)]
@@ -89,7 +112,7 @@ mod tests {
     #[test]
     fn test_header() {
         let msg = make_raw_udp_message(10, 23, 0);
-        let header = UdpHeaderView::new(&msg).unwrap();
+        let header = UdpMessageView::new(&msg).unwrap();
 
         assert_eq!(header.events_in_frame(), 10);
         assert_eq!(header.ppp_in_frame(), 23);

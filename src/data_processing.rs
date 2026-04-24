@@ -1,9 +1,6 @@
 use crate::WiringConfigRecord;
 
-use crate::header::{
-    HEADER_LEN_BYTES, HEADER_MARKER, NEUTRON_HEADER, SE_FRAME_HEADER, UdpHeaderView,
-    VETO_FRAME_HEADER,
-};
+use crate::udp_message::{HEADER_LEN_BYTES, HEADER_MARKER, UdpMessageView, UdpPacketType};
 use flatbuffers::FlatBufferBuilder;
 use isis_streaming_data_types::flatbuffers_generated::events_ev44::{
     Event44Message, Event44MessageArgs, finish_event_44_message_buffer,
@@ -43,20 +40,22 @@ pub fn process_udp_bytes_to_kafka(
     let frames = packet_to_frames(udp_packet);
 
     for frame in frames {
-        match frame.packet_type {
-            UdpPacketType::NeutronData => {
-                let result =
-                    process_neutron_frame(frame.packet, src_ip, wiring_config, &mut kafka_bytes);
+        match frame.packet_type() {
+            Some(UdpPacketType::NeutronData) => {
+                let result = process_neutron_frame(frame, src_ip, wiring_config, &mut kafka_bytes);
                 if let Err(e) = result {
                     warn!("Error processing neutron data: {}", e);
                     // todo: metrics
                 }
             }
-            UdpPacketType::SampleEnvironment => {
+            Some(UdpPacketType::SampleEnvironment) => {
                 warn!("Received unimplemented sample environment packet");
             }
-            UdpPacketType::VetoFrame => {
+            Some(UdpPacketType::VetoFrame) => {
                 warn!("Received unimplemented veto packet");
+            }
+            None => {
+                warn!("Received unimplemented packet type");
             }
         }
     }
@@ -64,26 +63,12 @@ pub fn process_udp_bytes_to_kafka(
     kafka_bytes
 }
 
-/// Types of packets we may receive over UDP.
-enum UdpPacketType {
-    VetoFrame,
-    SampleEnvironment,
-    NeutronData,
-}
-
-/// A reference to a decoded UDP packet of a particular type.
-/// The slice referenced by `packet` contains a header, and event data if applicable.
-struct UdpPacket<'a> {
-    packet_type: UdpPacketType,
-    packet: &'a [u8],
-}
-
 /// Input: a slice of binary UDP data
 ///
 /// Output: a vector of UDP packets; Each UDP message will be complete,
 /// i.e. containing the full UDP data for that message including all header bytes
 /// Vector will be empty if no frames found
-fn packet_to_frames(udp: &[u8]) -> Vec<UdpPacket<'_>> {
+fn packet_to_frames(udp: &[u8]) -> Vec<UdpMessageView<'_>> {
     // Find the byte-offsets of the beginning of frame markers.
     let mut marker_offsets = vec![];
     let mut offset = 0;
@@ -99,58 +84,27 @@ fn packet_to_frames(udp: &[u8]) -> Vec<UdpPacket<'_>> {
     // Last message goes up to end of data.
     marker_offsets.push(udp.len());
 
-    let mut packets = vec![];
-
-    for (&start_inclusive, &end_exclusive) in marker_offsets.iter().tuple_windows() {
-        if let Some(msg) = udp.get(start_inclusive..end_exclusive)
-            && msg.len() >= HEADER_LEN_BYTES
-        {
-            match msg.get(4..8) {
-                Some(NEUTRON_HEADER) => {
-                    packets.push(UdpPacket {
-                        packet_type: UdpPacketType::NeutronData,
-                        packet: msg,
-                    });
-                }
-                Some(VETO_FRAME_HEADER) => {
-                    packets.push(UdpPacket {
-                        packet_type: UdpPacketType::VetoFrame,
-                        packet: msg,
-                    });
-                }
-                Some(SE_FRAME_HEADER) => {
-                    packets.push(UdpPacket {
-                        packet_type: UdpPacketType::SampleEnvironment,
-                        packet: msg,
-                    });
-                }
-                _ => {
-                    // Unknown packet type
-                    warn!("Unknown packet type: {:?}", msg.get(4..8));
-                }
-            }
-        }
-    }
-
-    packets
+    marker_offsets
+        .iter()
+        .tuple_windows()
+        .filter_map(|(&start, &end)| udp.get(start..end).and_then(UdpMessageView::new))
+        .collect()
 }
 
 /// Input: a neutron event UDP packet, header, events, and possibly padding zeros.
 /// Output: Vec of Flatbuffers-encoded messages to send to Kafka
 fn process_neutron_frame(
-    frame_udp: &[u8],
+    message: UdpMessageView,
     src_ip: &str,
     wiring_config: &[WiringConfigRecord],
     ev44_fb_packets: &mut Vec<Vec<u8>>,
 ) -> Result<(), &'static str> {
-    let header = UdpHeaderView::new(frame_udp).ok_or("Invalid frame header; not long enough")?;
-
-    let nanoseconds_since_epoch = header
+    let nanoseconds_since_epoch = message
         .gps_time()
         .nanoseconds_since_epoch()
         .ok_or("Invalid frame header; timestamp is invalid")?;
 
-    let event_data = &frame_udp[HEADER_LEN_BYTES..];
+    let event_data = message.event_data_bytes();
 
     if !event_data.len().is_multiple_of(8) {
         return Err("Event data is not a multiple of pairs of 4-byte words");
@@ -349,7 +303,7 @@ mod tests {
         + (35 << 30)  // second 35
         + (123 << 20)  // millisecond 123
         + (456 << 10)  // microsecond 456
-        + (789);  // nanosecond 789
+        + (789); // nanosecond 789
 
     fn make_raw_udp_header(num_events: usize) -> Vec<u8> {
         // Note: 4-byte words
