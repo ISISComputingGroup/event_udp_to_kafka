@@ -104,7 +104,7 @@ fn process_neutron_frame(
         .nanoseconds_since_epoch()
         .ok_or("Invalid frame header; timestamp is invalid")?;
 
-    let event_data = message.event_data_bytes();
+    let event_data = message.data_bytes();
 
     if !event_data.len().is_multiple_of(8) {
         return Err("Event data is not a multiple of pairs of 4-byte words");

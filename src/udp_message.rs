@@ -1,11 +1,13 @@
 use crate::gps_time::GpsTime;
 
-pub const HEADER_MARKER: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF];
+/// Marker word for "start of header"
+pub const HEADER_MARKER: &[u8; 4] = &[0xFF, 0xFF, 0xFF, 0xFF];
 const VETO_FRAME_HEADER: &[u8; 4] = &[0xFC, 0xFF, 0xFF, 0xFF];
 const SE_FRAME_HEADER: &[u8; 4] = &[0xFD, 0xFF, 0xFF, 0xFF];
 const NEUTRON_HEADER: &[u8; 4] = &[0xFF, 0xFF, 0xFF, 0xFF];
 
-pub const HEADER_LEN_BYTES: usize = 16 * 4; // 16 4-byte words
+/// Length of header in bytes (16 4-byte words)
+pub const HEADER_LEN_BYTES: usize = 16 * 4;
 
 /// View onto a UDP message byte-slice.
 pub struct UdpMessageView<'a> {
@@ -13,10 +15,10 @@ pub struct UdpMessageView<'a> {
 }
 
 impl<'a> UdpMessageView<'a> {
-    /// Create a new view onto a UDP message, if the slice is long enough to contain a header and
-    /// starts with a header marker.
+    /// Create a new view onto a UDP message, if the slice is long enough to contain a header,
+    /// starts with a header marker, and is a multiple of 4-byte words.
     pub fn new(content: &[u8]) -> Option<UdpMessageView<'_>> {
-        (content.len() >= HEADER_LEN_BYTES && content.starts_with(HEADER_MARKER))
+        (content.len() >= HEADER_LEN_BYTES && content.starts_with(HEADER_MARKER) && content.len().is_multiple_of(4))
             .then_some(UdpMessageView { content })
     }
 
@@ -56,6 +58,7 @@ impl<'a> UdpMessageView<'a> {
         ))
     }
 
+    /// Extract the packet type from the header.
     pub fn packet_type(&self) -> Option<UdpPacketType> {
         match &self.header_word(1) {
             NEUTRON_HEADER => Some(UdpPacketType::NeutronData),
@@ -68,7 +71,7 @@ impl<'a> UdpMessageView<'a> {
     /// Get the non-header bytes from this message.
     ///
     /// For neutron frames, these bytes contain the neutron event data.
-    pub fn event_data_bytes(&self) -> &[u8] {
+    pub fn data_bytes(&self) -> &[u8] {
         &self.content[HEADER_LEN_BYTES..]
     }
 }
@@ -89,7 +92,7 @@ mod tests {
         // Total header length: 64 bytes (16 words)
         [255_u8; 4] // Header word 0: 'running' header marker
             .iter()
-            .chain(&[255_u8; 4]) // Header word 1: neutron data header marker
+            .chain(NEUTRON_HEADER) // Header word 1: neutron data header marker
             .chain(&[0_u8; 4]) // Header word 2: information
             .chain(&[0_u8; 4]) // Header word 3: frame number
             .chain(&gps_time.to_be_bytes()) // Header words 4 & 5: GPS timestamp
