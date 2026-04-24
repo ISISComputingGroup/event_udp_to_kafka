@@ -21,16 +21,16 @@ pub fn process_udp_to_kafka<F>(
     udp_hex: &str,
     src_ip: &str,
     wiring_config: &[WiringConfigRecord],
-    sink: F
-) -> ()
-    where F: FnMut(&[u8])
+    sink: F,
+) where
+    F: FnMut(&[u8]),
 {
     process_udp_bytes_to_kafka(
         fbb,
         &hex::decode(udp_hex).expect("Invalid hex"),
         src_ip,
         wiring_config,
-        sink
+        sink,
     )
 }
 
@@ -44,9 +44,9 @@ pub fn process_udp_bytes_to_kafka<F>(
     udp_packet: &[u8],
     src_ip: &str,
     wiring_config: &[WiringConfigRecord],
-    mut sink: F
-) -> ()
-    where F: FnMut(&[u8])
+    mut sink: F,
+) where
+    F: FnMut(&[u8]),
 {
     // Split into the different frames in the packet
     // Filters any empty frames each time
@@ -55,8 +55,7 @@ pub fn process_udp_bytes_to_kafka<F>(
     for frame in frames {
         match frame.packet_type() {
             Some(UdpPacketType::NeutronData) => {
-                let result =
-                    process_neutron_frame(fbb, frame, src_ip, wiring_config, &mut sink);
+                let result = process_neutron_frame(fbb, frame, src_ip, wiring_config, &mut sink);
                 if let Err(e) = result {
                     warn!("Error processing neutron data: {}", e);
                     // todo: metrics
@@ -114,9 +113,10 @@ fn process_neutron_frame<F>(
     message: UdpMessageView,
     src_ip: &str,
     wiring_config: &[WiringConfigRecord],
-    sink: F
+    sink: F,
 ) -> Result<(), &'static str>
-    where F: FnMut(&[u8])
+where
+    F: FnMut(&[u8]),
 {
     let nanoseconds_since_epoch = message
         .gps_time()
@@ -203,8 +203,7 @@ fn process_pc3544ms_events(
                         let detector_id = (pulse_height
                             / (4096 / channel_config.mantid_detector_id_length))
                             + channel_config.mantid_detector_id_start;
-                        let event_tof =
-                            u32::from_be_bytes(event[0..4].try_into().ok()?) & 0xFFFFFF;
+                        let event_tof = u32::from_be_bytes(event[0..4].try_into().ok()?) & 0xFFFFFF;
 
                         Some((event_tof as i32, detector_id as i32))
                     } else {
@@ -289,8 +288,8 @@ fn send_ev44<F>(
     tofs: &[i32],
     det_ids: &[i32],
     mut sink: F,
-) -> ()
-    where F: FnMut(&[u8])
+) where
+    F: FnMut(&[u8]),
 {
     bldr.reset();
 
@@ -299,8 +298,8 @@ fn send_ev44<F>(
         message_id: message_id as i64,
         reference_time: Some(bldr.create_vector(&[pulse_time as i64])),
         reference_time_index: Some(bldr.create_vector(&[0])),
-        time_of_flight: Some(bldr.create_vector(&tofs)),
-        pixel_id: Some(bldr.create_vector(&det_ids)),
+        time_of_flight: Some(bldr.create_vector(tofs)),
+        pixel_id: Some(bldr.create_vector(det_ids)),
     };
 
     let ev44_offset = Event44Message::create(bldr, &args);
@@ -390,7 +389,9 @@ mod tests {
             &data,
             "192.168.1.1",
             &wiring_config,
-            |msg| {msgs.push(msg.to_vec());},
+            |msg| {
+                msgs.push(msg.to_vec());
+            },
         );
 
         assert_eq!(msgs.len(), 1);
@@ -450,7 +451,9 @@ mod tests {
             &data,
             "192.168.1.1",
             &wiring_config,
-            |msg| {msgs.push(msg.to_vec());},
+            |msg| {
+                msgs.push(msg.to_vec());
+            },
         );
 
         assert_eq!(msgs.len(), 1);
@@ -511,7 +514,9 @@ mod tests {
             &data,
             "192.168.1.1",
             &wiring_config,
-            |msg| {msgs.push(msg.to_vec());},
+            |msg| {
+                msgs.push(msg.to_vec());
+            },
         );
 
         assert_eq!(msgs.len(), 1);

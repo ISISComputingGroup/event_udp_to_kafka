@@ -208,7 +208,7 @@ pub async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<WiringConfigRe
                         if let Err(e) = result {
                             error!("Kafka error: {:?}", e);
                         }
-                    }
+                    },
                 );
                 consumer.commit_message(&m, CommitMode::Async).unwrap();
 
