@@ -1,3 +1,5 @@
+//! Utilities for converting UDP bytes to flatbuffers-encoded messages.
+
 use crate::WiringConfigRecord;
 
 use crate::udp_message::{HEADER_LEN_BYTES, HEADER_MARKER, UdpMessageView, UdpPacketType};
@@ -8,6 +10,8 @@ use isis_streaming_data_types::flatbuffers_generated::events_ev44::{
 use itertools::Itertools;
 use log::{error, warn};
 
+/// Process a hexed string of UDP data to the corresponding flatbuffers messages.
+///
 /// Input: hexed string containing the data from a UDP packet (which may contain multiple
 /// event packets)
 ///
@@ -24,6 +28,8 @@ pub fn process_udp_to_kafka(
     )
 }
 
+/// Process a byte-slice of UDP data to the corresponding flatbuffers messages.
+///
 /// Input: binary data from a UDP packet (which may contain multiple event packets)
 ///
 /// Output: Vector of flatbuffers-encoded messages to send to Kafka
@@ -63,6 +69,8 @@ pub fn process_udp_bytes_to_kafka(
     kafka_bytes
 }
 
+/// Extract individual UDP messages from UDP data which may contain multiple messages.
+///
 /// Input: a slice of binary UDP data
 ///
 /// Output: a vector of UDP packets; Each UDP message will be complete,
@@ -91,6 +99,8 @@ fn packet_to_frames(udp: &[u8]) -> Vec<UdpMessageView<'_>> {
         .collect()
 }
 
+/// Convert a neutron data packet to flatbuffers messages.
+///
 /// Input: a neutron event UDP packet, header, events, and possibly padding zeros.
 /// Output: Vec of Flatbuffers-encoded messages to send to Kafka
 fn process_neutron_frame(
@@ -146,6 +156,7 @@ fn process_neutron_frame(
     Ok(())
 }
 
+/// Extract vectors of (time_of_flight, pixel_id) from pc3544ms event data.
 fn process_pc3544ms_events(
     event_data: &[u8],
     packet_config: &[&WiringConfigRecord],
@@ -202,6 +213,7 @@ fn process_pc3544ms_events(
     }
 }
 
+/// Extract vectors of (time_of_flight, pixel_id) from pc3634m1s event data.
 fn process_pc3634m1s_events(
     event_data: &[u8],
     packet_config: &WiringConfigRecord,
@@ -223,6 +235,7 @@ fn process_pc3634m1s_events(
     }
 }
 
+/// Extract vectors of (time_of_flight, pixel_id) from pc3877ms event data.
 fn process_pc3877ms_events(
     event_data: &[u8],
     packet_config: &WiringConfigRecord,
@@ -260,6 +273,7 @@ fn process_pc3877ms_events(
     }
 }
 
+/// Encode data to ev44 format
 fn encode_ev44(
     bldr: &mut FlatBufferBuilder,
     source_name: &str,

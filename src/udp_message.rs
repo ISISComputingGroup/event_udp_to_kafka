@@ -1,15 +1,25 @@
+//! Utilities for interpreting headers from a UDP message.
+
 use crate::gps_time::GpsTime;
 
-/// Marker word for "start of header"
+/// Marker word for "start of header".
 pub const HEADER_MARKER: &[u8; 4] = &[0xFF, 0xFF, 0xFF, 0xFF];
+
+/// Marker for a "veto frame" data packet.
 const VETO_FRAME_HEADER: &[u8; 4] = &[0xFC, 0xFF, 0xFF, 0xFF];
+
+/// Marker for a "sample environment" data packet.
 const SE_FRAME_HEADER: &[u8; 4] = &[0xFD, 0xFF, 0xFF, 0xFF];
+
+/// Marker for a neutron event data packet.
 const NEUTRON_HEADER: &[u8; 4] = &[0xFF, 0xFF, 0xFF, 0xFF];
 
-/// Length of header in bytes (16 4-byte words)
+/// Length of header in bytes (16 4-byte words).
 pub const HEADER_LEN_BYTES: usize = 16 * 4;
 
 /// View onto a UDP message byte-slice.
+///
+/// This struct provides helper methods for interpreting the bytes from the header of a UDP message.
 pub struct UdpMessageView<'a> {
     content: &'a [u8],
 }
@@ -18,8 +28,10 @@ impl<'a> UdpMessageView<'a> {
     /// Create a new view onto a UDP message, if the slice is long enough to contain a header,
     /// starts with a header marker, and is a multiple of 4-byte words.
     pub fn new(content: &[u8]) -> Option<UdpMessageView<'_>> {
-        (content.len() >= HEADER_LEN_BYTES && content.starts_with(HEADER_MARKER) && content.len().is_multiple_of(4))
-            .then_some(UdpMessageView { content })
+        (content.len() >= HEADER_LEN_BYTES
+            && content.starts_with(HEADER_MARKER)
+            && content.len().is_multiple_of(4))
+        .then_some(UdpMessageView { content })
     }
 
     /// Extract a single word from the header
@@ -30,15 +42,20 @@ impl<'a> UdpMessageView<'a> {
             .expect("slice of length 4")
     }
 
+    /// Frame number.
     pub fn frame_number(&self) -> u32 {
         u32::from_be_bytes(self.header_word(3))
     }
 
+    /// Total events in this ISIS frame.
+    ///
+    /// Note: this is not the same as the total events in this UDP message; an ISIS
+    /// frame may be split over multiple messages.
     pub fn events_in_frame(&self) -> u32 {
         u32::from_be_bytes(self.header_word(7))
     }
 
-    /// Raw ppp per frame; u16 exactly as transmitted over UDP.
+    /// Raw protons-per-pulse per frame; u16 exactly as transmitted over UDP.
     pub fn raw_ppp_per_frame(&self) -> u16 {
         u16::from_be_bytes(self.header_word(8)[0..2].try_into().unwrap())
     }
@@ -54,10 +71,12 @@ impl<'a> UdpMessageView<'a> {
         u16::from_be_bytes(self.header_word(9)[0..2].try_into().unwrap())
     }
 
+    /// Period number.
     pub fn period_number(&self) -> u16 {
         u16::from_be_bytes(self.header_word(6)[0..2].try_into().unwrap())
     }
 
+    /// GPS timestamp of this message.
     pub fn gps_time(&self) -> GpsTime {
         GpsTime::from_packed_repr(u64::from_be_bytes(
             self.content[4 * 4..6 * 4]
@@ -66,7 +85,7 @@ impl<'a> UdpMessageView<'a> {
         ))
     }
 
-    /// Extract the packet type from the header.
+    /// Packet type.
     pub fn packet_type(&self) -> Option<UdpPacketType> {
         match &self.header_word(1) {
             NEUTRON_HEADER => Some(UdpPacketType::NeutronData),

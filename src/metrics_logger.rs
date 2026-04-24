@@ -1,3 +1,5 @@
+//! Support utilities for exposing metrics.
+
 use influxdb2_derive::WriteDataPoint;
 
 #[derive(Default, WriteDataPoint)]

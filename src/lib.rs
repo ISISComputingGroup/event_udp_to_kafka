@@ -1,3 +1,21 @@
+//! # `data-stream-processor`
+//!
+//! This module listens to an input kafka topic containing JSON payloads
+//! of the following form:
+//!
+//! ```json
+//! {
+//!     "src": "192.168.1.1",
+//!     "packet_data": "abc123",
+//! }
+//! ```
+//!
+//! Where `src` is the IP address from which a message was received, and `packet_data`
+//! is a hexed representation of the received data.
+//!
+//! `data-stream-processor` then converts these received messages to flatbuffers-encoded messages,
+//! and then sends them to an output topic (usually `_rawEvents`).
+
 pub mod data_processing;
 pub mod gps_time;
 pub mod metrics_logger;
@@ -45,6 +63,7 @@ impl ConsumerContext for CustomContext {
 // A type alias with your custom consumer can be created for convenience.
 type LoggingConsumer = StreamConsumer<CustomContext>;
 
+/// Command-line arguments for the `data-stream-processor`.
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Args {
@@ -90,12 +109,14 @@ pub struct Args {
     pub wiring_csv_path: String,
 }
 
+/// Schema for JSON data on the input Kafka topic.
 #[derive(Deserialize)]
 struct RawUdpJson {
     src: String,
     packet_data: String,
 }
 
+/// Wiring table information.
 #[derive(Debug, serde::Deserialize)]
 #[allow(unused)]
 pub struct WiringConfigRecord {
@@ -130,7 +151,8 @@ pub fn read_csv<P: AsRef<Path>>(filename: P) -> Vec<WiringConfigRecord> {
         .unwrap_or_else(|err| panic!("Cannot deserialize wiring table line: {err}"))
 }
 
-pub async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<WiringConfigRecord>) {
+/// Listen to the input Kafka topic and produce messages onto the output Kafka topic forever.
+pub async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<WiringConfigRecord>) -> ! {
     info!("Start UDP processing");
     info!("Configuration: {:#?}", cmd_args);
 

@@ -1,3 +1,5 @@
+//! Utilities for GPS timestamps as transmitted over UDP.
+
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 
 /// 8-byte packed representation of a GPS Timestamp, in the format streamed in UDP headers.
@@ -5,21 +7,23 @@ use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 /// Data is big-endian and packed into two 4-byte words.
 ///
 /// Word 1:
-///   Years: bits 24..=31 (as offset from year 2000)
-///   Days: bits 15..=23
-///   Hours: bits 10..=14
-///   Minutes: bits 4..=9
-///   Seconds (most significant bits): bits 0..=3
+/// - Years: bits 24..=31 (as offset from year 2000)
+/// - Days: bits 15..=23
+/// - Hours: bits 10..=14
+/// - Minutes: bits 4..=9
+/// - Seconds (most significant bits): bits 0..=3
+///
 /// Word 2:
-///   Seconds (least significant bits): bits 30..=31
-///   Milliseconds: bits 20..=29
-///   Microseconds: bits 10..=19
-///   Nanoseconds: bits 0..=9
+/// - Seconds (least significant bits): bits 30..=31
+/// - Milliseconds: bits 20..=29
+/// - Microseconds: bits 10..=19
+/// - Nanoseconds: bits 0..=9
 pub struct GpsTime {
     content: u64,
 }
 
 impl GpsTime {
+    /// Create a new GpsTime struct from it's packed 64-bit representation.
     pub fn from_packed_repr(packed_repr: u64) -> GpsTime {
         GpsTime {
             content: packed_repr,
