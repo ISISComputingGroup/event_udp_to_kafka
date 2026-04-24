@@ -16,17 +16,21 @@ use log::{error, warn};
 /// event packets)
 ///
 /// Output: Vector of flatbuffers-encoded messages to send to Kafka
-pub fn process_udp_to_kafka(
+pub fn process_udp_to_kafka<F>(
     fbb: &mut FlatBufferBuilder,
     udp_hex: &str,
     src_ip: &str,
     wiring_config: &[WiringConfigRecord],
-) -> Vec<Vec<u8>> {
+    sink: F
+) -> ()
+    where F: FnMut(&[u8])
+{
     process_udp_bytes_to_kafka(
         fbb,
         &hex::decode(udp_hex).expect("Invalid hex"),
         src_ip,
         wiring_config,
+        sink
     )
 }
 
@@ -35,15 +39,15 @@ pub fn process_udp_to_kafka(
 /// Input: binary data from a UDP packet (which may contain multiple event packets)
 ///
 /// Output: Vector of flatbuffers-encoded messages to send to Kafka
-pub fn process_udp_bytes_to_kafka(
+pub fn process_udp_bytes_to_kafka<F>(
     fbb: &mut FlatBufferBuilder,
     udp_packet: &[u8],
     src_ip: &str,
     wiring_config: &[WiringConfigRecord],
-) -> Vec<Vec<u8>> {
-    // make the vector for the product now
-    let mut kafka_bytes: Vec<Vec<u8>> = vec![];
-
+    mut sink: F
+) -> ()
+    where F: FnMut(&[u8])
+{
     // Split into the different frames in the packet
     // Filters any empty frames each time
     let frames = packet_to_frames(udp_packet);
@@ -52,7 +56,7 @@ pub fn process_udp_bytes_to_kafka(
         match frame.packet_type() {
             Some(UdpPacketType::NeutronData) => {
                 let result =
-                    process_neutron_frame(fbb, frame, src_ip, wiring_config, &mut kafka_bytes);
+                    process_neutron_frame(fbb, frame, src_ip, wiring_config, &mut sink);
                 if let Err(e) = result {
                     warn!("Error processing neutron data: {}", e);
                     // todo: metrics
@@ -69,8 +73,6 @@ pub fn process_udp_bytes_to_kafka(
             }
         }
     }
-
-    kafka_bytes
 }
 
 /// Extract individual UDP messages from UDP data which may contain multiple messages.
@@ -107,13 +109,15 @@ fn packet_to_frames(udp: &[u8]) -> Vec<UdpMessageView<'_>> {
 ///
 /// Input: a neutron event UDP packet, header, events, and possibly padding zeros.
 /// Output: Vec of Flatbuffers-encoded messages to send to Kafka
-fn process_neutron_frame(
+fn process_neutron_frame<F>(
     fbb: &mut FlatBufferBuilder,
     message: UdpMessageView,
     src_ip: &str,
     wiring_config: &[WiringConfigRecord],
-    ev44_fb_packets: &mut Vec<Vec<u8>>,
-) -> Result<(), &'static str> {
+    sink: F
+) -> Result<(), &'static str>
+    where F: FnMut(&[u8])
+{
     let nanoseconds_since_epoch = message
         .gps_time()
         .nanoseconds_since_epoch()
@@ -147,15 +151,15 @@ fn process_neutron_frame(
     }
 
     // Trying with EV44 Packets
-    let fb_bytes = encode_ev44(
+    send_ev44(
         fbb,
         "rust_proc",
         0,
         nanoseconds_since_epoch,
         &tofs,
         &det_ids,
+        sink,
     );
-    ev44_fb_packets.push(fb_bytes);
     Ok(())
 }
 
@@ -163,7 +167,7 @@ fn process_neutron_frame(
 fn process_pc3544ms_events(
     event_data: &[u8],
     packet_config: &[&WiringConfigRecord],
-) -> (Vec<u32>, Vec<u32>) {
+) -> (Vec<i32>, Vec<i32>) {
     match packet_config[0].packet_type.as_str() {
         "Position" => {
             event_data
@@ -180,7 +184,7 @@ fn process_pc3544ms_events(
 
                         let tof = u32::from_be_bytes(event[0..4].try_into().unwrap()) & 0xFFFFFF;
 
-                        Some((tof, detector_id))
+                        Some((tof as i32, detector_id as i32))
                     } else {
                         None
                     }
@@ -193,16 +197,16 @@ fn process_pc3544ms_events(
                 .filter_map(|event| {
                     let channel = (event[4] >> 2) & 0b111; // Bits 26..=28
                     let pulse_height =
-                        (u32::from_be_bytes(event[4..8].try_into().unwrap()) >> 12) & 0xFFF;
+                        (u32::from_be_bytes(event[4..8].try_into().ok()?) >> 12) & 0xFFF;
 
                     if let Some(channel_config) = packet_config.iter().find(|c| c.ch == channel) {
                         let detector_id = (pulse_height
                             / (4096 / channel_config.mantid_detector_id_length))
                             + channel_config.mantid_detector_id_start;
                         let event_tof =
-                            u32::from_be_bytes(event[0..4].try_into().unwrap()) & 0xFFFFFF;
+                            u32::from_be_bytes(event[0..4].try_into().ok()?) & 0xFFFFFF;
 
-                        Some((event_tof, detector_id))
+                        Some((event_tof as i32, detector_id as i32))
                     } else {
                         None
                     }
@@ -220,7 +224,7 @@ fn process_pc3544ms_events(
 fn process_pc3634m1s_events(
     event_data: &[u8],
     packet_config: &WiringConfigRecord,
-) -> (Vec<u32>, Vec<u32>) {
+) -> (Vec<i32>, Vec<i32>) {
     match packet_config.packet_type.as_str() {
         "DIM_OUT" => event_data
             .chunks_exact(8)
@@ -228,7 +232,7 @@ fn process_pc3634m1s_events(
                 let tof = u32::from_be_bytes(event[0..4].try_into().unwrap()) & 0xFFFFFF;
                 let mut val = u32::from_be_bytes(event[4..8].try_into().unwrap());
                 val += packet_config.mantid_detector_id_start;
-                (tof, val)
+                (tof as i32, val as i32)
             })
             .unzip(),
         _ => {
@@ -242,7 +246,7 @@ fn process_pc3634m1s_events(
 fn process_pc3877ms_events(
     event_data: &[u8],
     packet_config: &WiringConfigRecord,
-) -> (Vec<u32>, Vec<u32>) {
+) -> (Vec<i32>, Vec<i32>) {
     const CLOCK_TICKS_TO_NS: u32 = 20;
 
     match packet_config.packet_type.as_str() {
@@ -255,7 +259,7 @@ fn process_pc3877ms_events(
                 let mut val = u32::from_be_bytes(event[4..8].try_into().unwrap()) & 0xFFFF;
                 val += packet_config.mantid_detector_id_start;
 
-                (tof, val)
+                (tof as i32, val as i32)
             })
             .unzip(),
         "PulseHeight" => event_data
@@ -266,7 +270,7 @@ fn process_pc3877ms_events(
 
                 let tof = (u32::from_be_bytes(event[0..4].try_into().unwrap())) & 0xFFFFFF;
 
-                (tof, val)
+                (tof as i32, val as i32)
             })
             .unzip(),
         _ => {
@@ -277,34 +281,31 @@ fn process_pc3877ms_events(
 }
 
 /// Encode data to ev44 format
-fn encode_ev44(
+fn send_ev44<F>(
     bldr: &mut FlatBufferBuilder,
     source_name: &str,
     message_id: u64,
     pulse_time: u64,
-    tofs: &[u32],
-    det_ids: &[u32],
-) -> Vec<u8> {
+    tofs: &[i32],
+    det_ids: &[i32],
+    mut sink: F,
+) -> ()
+    where F: FnMut(&[u8])
+{
     bldr.reset();
-
-    let reference_time = vec![pulse_time as i64];
-    let reference_time_index = vec![0];
-
-    let tofs_i32 = tofs.iter().map(|t| *t as i32).collect::<Vec<_>>();
-    let det_ids_i32 = det_ids.iter().map(|d| *d as i32).collect::<Vec<_>>();
 
     let args = Event44MessageArgs {
         source_name: Some(bldr.create_string(source_name)),
         message_id: message_id as i64,
-        reference_time: Some(bldr.create_vector(&reference_time)),
-        reference_time_index: Some(bldr.create_vector(&reference_time_index)),
-        time_of_flight: Some(bldr.create_vector(&tofs_i32)),
-        pixel_id: Some(bldr.create_vector(&det_ids_i32)),
+        reference_time: Some(bldr.create_vector(&[pulse_time as i64])),
+        reference_time_index: Some(bldr.create_vector(&[0])),
+        time_of_flight: Some(bldr.create_vector(&tofs)),
+        pixel_id: Some(bldr.create_vector(&det_ids)),
     };
 
     let ev44_offset = Event44Message::create(bldr, &args);
     finish_event_44_message_buffer(bldr, ev44_offset);
-    bldr.finished_data().to_vec()
+    sink(bldr.finished_data());
 }
 
 #[cfg(test)]
@@ -383,11 +384,13 @@ mod tests {
             comment: "".to_owned(),
         }];
 
-        let msgs = process_udp_to_kafka(
+        let mut msgs = vec![];
+        process_udp_to_kafka(
             &mut FlatBufferBuilder::new(),
             &data,
             "192.168.1.1",
             &wiring_config,
+            |msg| {msgs.push(msg.to_vec());},
         );
 
         assert_eq!(msgs.len(), 1);
@@ -441,12 +444,13 @@ mod tests {
             mantid_detector_id_length: 256,
             comment: "".to_owned(),
         }];
-
-        let msgs = process_udp_to_kafka(
+        let mut msgs = vec![];
+        process_udp_to_kafka(
             &mut FlatBufferBuilder::new(),
             &data,
             "192.168.1.1",
             &wiring_config,
+            |msg| {msgs.push(msg.to_vec());},
         );
 
         assert_eq!(msgs.len(), 1);
@@ -501,11 +505,13 @@ mod tests {
             comment: "".to_owned(),
         }];
 
-        let msgs = process_udp_to_kafka(
+        let mut msgs = vec![];
+        process_udp_to_kafka(
             &mut FlatBufferBuilder::new(),
             &data,
             "192.168.1.1",
             &wiring_config,
+            |msg| {msgs.push(msg.to_vec());},
         );
 
         assert_eq!(msgs.len(), 1);

@@ -193,27 +193,24 @@ pub async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<WiringConfigRe
                 // Process the Data
                 let raw_udpjson: RawUdpJson = serde_json::from_slice(m.payload().unwrap()).unwrap();
 
-                let kafka_fbs = process_udp_to_kafka(
+                process_udp_to_kafka(
                     &mut fbb,
                     &raw_udpjson.packet_data,
                     &raw_udpjson.src,
                     &wiring_config,
+                    |payload| {
+                        let result = producer.send(
+                            rdkafka::producer::BaseRecord::to(&cmd_args.dest_kafka_topic)
+                                .key("")
+                                .payload(payload),
+                        );
+
+                        if let Err(e) = result {
+                            error!("Kafka error: {:?}", e);
+                        }
+                    }
                 );
                 consumer.commit_message(&m, CommitMode::Async).unwrap();
-
-                debug!("Num Kafka Messages to Prod: {}", kafka_fbs.len());
-
-                for flatbuffer in kafka_fbs {
-                    let result = producer.send(
-                        rdkafka::producer::BaseRecord::to(&cmd_args.dest_kafka_topic)
-                            .key("")
-                            .payload(&flatbuffer),
-                    );
-
-                    if let Err(e) = result {
-                        error!("Kafka error: {:?}", e);
-                    }
-                }
 
                 let elapsed = now.elapsed();
                 debug!("PK_IP: {} - PROCt: {:?} ", raw_udpjson.src, elapsed);

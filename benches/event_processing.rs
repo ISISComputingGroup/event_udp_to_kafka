@@ -73,6 +73,7 @@ fn benchmark_message_processing(c: &mut Criterion) {
                         black_box(&data),
                         black_box("192.168.1.1"),
                         &wiring_config,
+                        |msg| {black_box(msg);}
                     )
                 })
             },
