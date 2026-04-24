@@ -38,10 +38,18 @@ impl<'a> UdpMessageView<'a> {
         u32::from_be_bytes(self.header_word(7))
     }
 
-    pub fn ppp_in_frame(&self) -> u16 {
+    /// Raw ppp per frame; u16 exactly as transmitted over UDP.
+    pub fn raw_ppp_per_frame(&self) -> u16 {
         u16::from_be_bytes(self.header_word(8)[0..2].try_into().unwrap())
     }
 
+    /// uAh delivered during this ISIS frame.
+    pub fn ppp_per_frame(&self) -> f64 {
+        const RAW_TO_UAH_SCALING: f64 = 1.738e-6;
+        self.raw_ppp_per_frame() as f64 * RAW_TO_UAH_SCALING
+    }
+
+    /// Veto bits, as transmitted over UDP.
     pub fn vetoes(&self) -> u16 {
         u16::from_be_bytes(self.header_word(9)[0..2].try_into().unwrap())
     }
@@ -118,6 +126,6 @@ mod tests {
         let header = UdpMessageView::new(&msg).unwrap();
 
         assert_eq!(header.events_in_frame(), 10);
-        assert_eq!(header.ppp_in_frame(), 23);
+        assert_eq!(header.raw_ppp_per_frame(), 23);
     }
 }
