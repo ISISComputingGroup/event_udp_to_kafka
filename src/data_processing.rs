@@ -1,6 +1,9 @@
 use crate::WiringConfigRecord;
 
-use crate::header::{HEADER_LEN_BYTES, UdpHeaderView};
+use crate::header::{
+    HEADER_LEN_BYTES, HEADER_MARKER, NEUTRON_HEADER, SE_FRAME_HEADER, UdpHeaderView,
+    VETO_FRAME_HEADER,
+};
 use flatbuffers::FlatBufferBuilder;
 use isis_streaming_data_types::flatbuffers_generated::events_ev44::{
     Event44Message, Event44MessageArgs, finish_event_44_message_buffer,
@@ -81,17 +84,12 @@ struct UdpPacket<'a> {
 /// i.e. containing the full UDP data for that message including all header bytes
 /// Vector will be empty if no frames found
 fn packet_to_frames(udp: &[u8]) -> Vec<UdpPacket<'_>> {
-    const MARKER: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF];
-    const VETO_FRAME_HEADER: &[u8] = &[0xFC, 0xFF, 0xFF, 0xFF];
-    const SE_FRAME_HEADER: &[u8] = &[0xFD, 0xFF, 0xFF, 0xFF];
-    const NEUTRON_HEADER: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF];
-
     // Find the byte-offsets of the beginning of frame markers.
     let mut marker_offsets = vec![];
     let mut offset = 0;
 
     while offset < udp.len() {
-        if udp.get(offset..offset + 4) == Some(MARKER) {
+        if udp.get(offset..offset + 4) == Some(HEADER_MARKER) {
             marker_offsets.push(offset);
             offset += HEADER_LEN_BYTES;
         }
@@ -344,14 +342,14 @@ mod tests {
     use isis_streaming_data_types::{DeserializedMessage, deserialize_message};
 
     /// A valid timestamp, encoded in the UDP packed format.
-    const VALID_TIMESTAMP: u64 = (26 << (32 + 24))
-        + (106 << (32 + 15))
-        + (17 << (32 + 10))
-        + (9 << (32 + 4))
-        + (35 << 30)
-        + (123 << 20)
-        + (456 << 10)
-        + (789);
+    const VALID_TIMESTAMP: u64 = (26 << (32 + 24))  // 2026
+        + (106 << (32 + 15))  // April 16th
+        + (17 << (32 + 10))  // hour 17
+        + (9 << (32 + 4))  // minute 9
+        + (35 << 30)  // second 35
+        + (123 << 20)  // millisecond 123
+        + (456 << 10)  // microsecond 456
+        + (789);  // nanosecond 789
 
     fn make_raw_udp_header(num_events: usize) -> Vec<u8> {
         // Note: 4-byte words

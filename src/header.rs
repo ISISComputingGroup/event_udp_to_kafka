@@ -1,16 +1,23 @@
 use crate::gps_time::GpsTime;
 
+pub const HEADER_MARKER: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF];
+pub const VETO_FRAME_HEADER: &[u8] = &[0xFC, 0xFF, 0xFF, 0xFF];
+pub const SE_FRAME_HEADER: &[u8] = &[0xFD, 0xFF, 0xFF, 0xFF];
+pub const NEUTRON_HEADER: &[u8] = &[0xFF, 0xFF, 0xFF, 0xFF];
+
 pub const HEADER_LEN_BYTES: usize = 16 * 4; // 16 4-byte words
 
-/// View onto a UDP header byte-slice.
+/// View onto a UDP message byte-slice.
 pub struct UdpHeaderView<'a> {
     content: &'a [u8],
 }
 
 impl<'a> UdpHeaderView<'a> {
-    /// Create a new view onto a UDP header, if the slice is long enough to contain a header.
+    /// Create a new view onto a UDP header, if the slice is long enough to contain a header and
+    /// starts with a header marker.
     pub fn new(content: &[u8]) -> Option<UdpHeaderView<'_>> {
-        (content.len() >= HEADER_LEN_BYTES).then_some(UdpHeaderView { content })
+        (content.len() >= HEADER_LEN_BYTES && content.starts_with(HEADER_MARKER))
+            .then_some(UdpHeaderView { content })
     }
 
     /// Extract a single word from the header
