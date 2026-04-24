@@ -133,15 +133,12 @@ pub fn read_csv<P: AsRef<Path>>(filename: P) -> Vec<WiringConfigRecord> {
 pub async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<WiringConfigRecord>) {
     info!("Start UDP processing");
     info!("Configuration: {:#?}", cmd_args);
-    let kafka_broker = cmd_args.src_kafka_broker;
-    let kafka_broker_dest = cmd_args.dest_kafka_broker;
-    let dest_topic_name = cmd_args.dest_kafka_topic.as_str();
 
     let context = CustomContext;
 
     let consumer: LoggingConsumer = ClientConfig::new()
         .set("group.id", cmd_args.consumer_grp)
-        .set("bootstrap.servers", &kafka_broker)
+        .set("bootstrap.servers", cmd_args.src_kafka_broker)
         .set("enable.partition.eof", "false")
         .set("session.timeout.ms", "6000")
         .set("enable.auto.commit", "true")
@@ -151,7 +148,7 @@ pub async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<WiringConfigRe
         .expect("Consumer creation failed");
 
     let producer: &ThreadedProducer<DefaultProducerContext> = &ClientConfig::new()
-        .set("bootstrap.servers", &kafka_broker_dest)
+        .set("bootstrap.servers", cmd_args.dest_kafka_broker)
         .set("message.timeout.ms", "5000")
         .create()
         .expect("Producer creation error");
@@ -181,11 +178,15 @@ pub async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<WiringConfigRe
                 debug!("Num Kafka Messages to Prod: {}", kafka_fbs.len());
 
                 for flatbuffer in kafka_fbs {
-                    let _ = producer.send(
-                        rdkafka::producer::BaseRecord::to(dest_topic_name)
+                    let result = producer.send(
+                        rdkafka::producer::BaseRecord::to(&cmd_args.dest_kafka_topic)
                             .key("")
                             .payload(&flatbuffer),
                     );
+
+                    if let Err(e) = result {
+                        error!("Kafka error: {:?}", e);
+                    }
                 }
 
                 let elapsed = now.elapsed();
