@@ -17,11 +17,13 @@ use log::{error, warn};
 ///
 /// Output: Vector of flatbuffers-encoded messages to send to Kafka
 pub fn process_udp_to_kafka(
+    fbb: &mut FlatBufferBuilder,
     udp_hex: &str,
     src_ip: &str,
     wiring_config: &[WiringConfigRecord],
 ) -> Vec<Vec<u8>> {
     process_udp_bytes_to_kafka(
+        fbb,
         &hex::decode(udp_hex).expect("Invalid hex"),
         src_ip,
         wiring_config,
@@ -34,6 +36,7 @@ pub fn process_udp_to_kafka(
 ///
 /// Output: Vector of flatbuffers-encoded messages to send to Kafka
 pub fn process_udp_bytes_to_kafka(
+    fbb: &mut FlatBufferBuilder,
     udp_packet: &[u8],
     src_ip: &str,
     wiring_config: &[WiringConfigRecord],
@@ -48,7 +51,8 @@ pub fn process_udp_bytes_to_kafka(
     for frame in frames {
         match frame.packet_type() {
             Some(UdpPacketType::NeutronData) => {
-                let result = process_neutron_frame(frame, src_ip, wiring_config, &mut kafka_bytes);
+                let result =
+                    process_neutron_frame(fbb, frame, src_ip, wiring_config, &mut kafka_bytes);
                 if let Err(e) = result {
                     warn!("Error processing neutron data: {}", e);
                     // todo: metrics
@@ -104,6 +108,7 @@ fn packet_to_frames(udp: &[u8]) -> Vec<UdpMessageView<'_>> {
 /// Input: a neutron event UDP packet, header, events, and possibly padding zeros.
 /// Output: Vec of Flatbuffers-encoded messages to send to Kafka
 fn process_neutron_frame(
+    fbb: &mut FlatBufferBuilder,
     message: UdpMessageView,
     src_ip: &str,
     wiring_config: &[WiringConfigRecord],
@@ -119,8 +124,6 @@ fn process_neutron_frame(
     if !event_data.len().is_multiple_of(8) {
         return Err("Event data is not a multiple of pairs of 4-byte words");
     }
-
-    let mut bldr = FlatBufferBuilder::new();
 
     let packet_config = wiring_config
         .iter()
@@ -145,7 +148,7 @@ fn process_neutron_frame(
 
     // Trying with EV44 Packets
     let fb_bytes = encode_ev44(
-        &mut bldr,
+        fbb,
         "rust_proc",
         0,
         nanoseconds_since_epoch,
@@ -380,7 +383,12 @@ mod tests {
             comment: "".to_owned(),
         }];
 
-        let msgs = process_udp_to_kafka(&data, "192.168.1.1", &wiring_config);
+        let msgs = process_udp_to_kafka(
+            &mut FlatBufferBuilder::new(),
+            &data,
+            "192.168.1.1",
+            &wiring_config,
+        );
 
         assert_eq!(msgs.len(), 1);
         match deserialize_message(&msgs[0]) {
@@ -434,7 +442,12 @@ mod tests {
             comment: "".to_owned(),
         }];
 
-        let msgs = process_udp_to_kafka(&data, "192.168.1.1", &wiring_config);
+        let msgs = process_udp_to_kafka(
+            &mut FlatBufferBuilder::new(),
+            &data,
+            "192.168.1.1",
+            &wiring_config,
+        );
 
         assert_eq!(msgs.len(), 1);
         match deserialize_message(&msgs[0]) {
@@ -488,7 +501,12 @@ mod tests {
             comment: "".to_owned(),
         }];
 
-        let msgs = process_udp_to_kafka(&data, "192.168.1.1", &wiring_config);
+        let msgs = process_udp_to_kafka(
+            &mut FlatBufferBuilder::new(),
+            &data,
+            "192.168.1.1",
+            &wiring_config,
+        );
 
         assert_eq!(msgs.len(), 1);
         match deserialize_message(&msgs[0]) {

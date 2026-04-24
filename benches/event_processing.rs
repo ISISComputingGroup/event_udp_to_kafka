@@ -1,4 +1,5 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use flatbuffers::FlatBufferBuilder;
 use rust_data_stream_processor::WiringConfigRecord;
 use rust_data_stream_processor::data_processing::process_udp_to_kafka;
 use std::hint::black_box;
@@ -46,6 +47,8 @@ fn benchmark_message_processing(c: &mut Criterion) {
     let mut group = c.benchmark_group("message_processing");
     group.throughput(Throughput::Bytes(n_bytes as u64));
 
+    let mut fbb = FlatBufferBuilder::new();
+
     for board_type in ["PC3877MS", "PC3544MS", "PC3634M1S"] {
         let wiring_config = vec![WiringConfigRecord {
             brd_num: 0,
@@ -65,7 +68,12 @@ fn benchmark_message_processing(c: &mut Criterion) {
             &wiring_config,
             |b, wiring_config| {
                 b.iter(|| {
-                    process_udp_to_kafka(black_box(&data), black_box("192.168.1.1"), &wiring_config)
+                    process_udp_to_kafka(
+                        &mut fbb,
+                        black_box(&data),
+                        black_box("192.168.1.1"),
+                        &wiring_config,
+                    )
                 })
             },
         );

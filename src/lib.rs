@@ -34,6 +34,7 @@ use rdkafka::producer::{DefaultProducerContext, ThreadedProducer};
 use rdkafka::topic_partition_list::TopicPartitionList;
 use serde::Deserialize;
 
+use flatbuffers::FlatBufferBuilder;
 use log::{debug, error, info};
 use std::fs::File;
 use std::path::Path;
@@ -181,6 +182,8 @@ pub async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<WiringConfigRe
 
     info!("Mode 0 - Kafka -> Kafka Processing");
 
+    let mut fbb = FlatBufferBuilder::new();
+
     loop {
         match consumer.recv().await {
             Err(e) => error!("Kafka error: {}", e),
@@ -191,6 +194,7 @@ pub async fn kafka_udp_process(cmd_args: Args, wiring_config: Vec<WiringConfigRe
                 let raw_udpjson: RawUdpJson = serde_json::from_slice(m.payload().unwrap()).unwrap();
 
                 let kafka_fbs = process_udp_to_kafka(
+                    &mut fbb,
                     &raw_udpjson.packet_data,
                     &raw_udpjson.src,
                     &wiring_config,
