@@ -171,7 +171,9 @@ fn process_pc3544ms_events(
     match packet_config[0].packet_type.as_str() {
         "Position" => {
             event_data
-                .chunks_exact(8)
+                .as_chunks::<8>()
+                .0
+                .into_iter()
                 .filter_map(|event| {
                     let channel = (event[4] >> 2) & 0b111; // Bits 26..=28
                     let event_position =
@@ -193,7 +195,9 @@ fn process_pc3544ms_events(
         }
         "PulseHeight" => {
             event_data
-                .chunks_exact(8)
+                .as_chunks::<8>()
+                .0
+                .into_iter()
                 .filter_map(|event| {
                     let channel = (event[4] >> 2) & 0b111; // Bits 26..=28
                     let pulse_height =
@@ -226,7 +230,9 @@ fn process_pc3634m1s_events(
 ) -> (Vec<i32>, Vec<i32>) {
     match packet_config.packet_type.as_str() {
         "DIM_OUT" => event_data
-            .chunks_exact(8)
+            .as_chunks::<8>()
+            .0
+            .into_iter()
             .map(|event| {
                 let tof = u32::from_be_bytes(event[0..4].try_into().unwrap()) & 0xFFFFFF;
                 let mut val = u32::from_be_bytes(event[4..8].try_into().unwrap());
@@ -250,7 +256,9 @@ fn process_pc3877ms_events(
 
     match packet_config.packet_type.as_str() {
         "Position" => event_data
-            .chunks_exact(8)
+            .as_chunks::<8>()
+            .0
+            .into_iter()
             .map(|event| {
                 let mut tof = u32::from_be_bytes(event[0..4].try_into().unwrap()) & 0xFFFFFF;
                 tof *= CLOCK_TICKS_TO_NS;
@@ -262,7 +270,9 @@ fn process_pc3877ms_events(
             })
             .unzip(),
         "PulseHeight" => event_data
-            .chunks_exact(8)
+            .as_chunks::<8>()
+            .0
+            .into_iter()
             .map(|event| {
                 let mut val = (u32::from_be_bytes(event[4..8].try_into().unwrap()) >> 16) & 0xFFF;
                 val += packet_config.mantid_detector_id_start;
