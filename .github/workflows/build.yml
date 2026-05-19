@@ -1,0 +1,103 @@
+name: Build
+on: [push, workflow_call]
+
+permissions:
+  contents: write
+
+jobs:
+  lint:
+    runs-on: "windows-latest"
+    steps:
+      - uses: actions/checkout@v6
+      - name: install stable rust
+        run: rustup install stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Format check
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy -- --deny warnings
+  docs:
+    runs-on: "windows-latest"
+    steps:
+      - uses: actions/checkout@v6
+      - name: install stable rust
+        run: rustup install stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build docs
+        run: cargo doc --no-deps
+      - name: Generate index.html
+        shell: cmd
+        # u wot?
+        run: |
+          echo|set /p="<meta http-equiv="refresh" content="0; url=event_udp_to_kafka/">" > target/doc/index.html
+          exit /B 0
+      - name: Upload artifacts (docs)
+        uses: actions/upload-artifact@v7
+        with:
+          name: docs
+          path: |
+            target/doc
+          if-no-files-found: error
+          retention-days: 1
+      - name: Deploy docs
+        uses: peaceiris/actions-gh-pages@v4
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        with:
+          publish_branch: gh-pages
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: target/doc
+          force_orphan: true
+  tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ "ubuntu-latest", "windows-latest" ]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v6
+      - name: install stable rust
+        run: rustup install stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
+      - name: Unit tests
+        run: cargo test
+      - name: Unit tests (release mode)
+        run: cargo test --release
+      - name: Build (debug)
+        run: cargo build
+      - name: Build (release)
+        run: cargo build --release
+      - name: Upload artifacts (debug)
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ format('debug-{0}', matrix.os) }}
+          path: |
+            target/debug/rust-data-stream-processor
+            target/debug/rust-data-stream-processor.exe
+            target/debug/rust-data-stream-processor.pdb
+          if-no-files-found: error
+          retention-days: 1
+      - name: Upload artifacts (release)
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ format('release-{0}', matrix.os) }}
+          path: |
+            target/release/rust-data-stream-processor
+            target/release/rust-data-stream-processor.exe
+            target/release/rust-data-stream-processor.pdb
+          if-no-files-found: error
+          retention-days: 1
+  results:
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    name: Final Results
+    needs: [tests, lint, docs]
+    steps:
+      - run: exit 1
+        # see https://stackoverflow.com/a/67532120/4907315
+        if: >-
+          ${{
+               contains(needs.*.result, 'failure')
+            || contains(needs.*.result, 'cancelled')
+          }}
