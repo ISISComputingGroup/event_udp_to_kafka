@@ -1,4 +1,4 @@
-# Rust Data Stream Processor
+# `event-udp-to-kafka`
 
 This rust project takes streamed UDP data, processes it (based on a wiring config), flatbuffers it and sends it to the Kafka Events topic.
 

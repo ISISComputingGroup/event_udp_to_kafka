@@ -1,7 +1,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use event_udp_to_kafka::WiringConfigRecord;
+use event_udp_to_kafka::data_processing::process_udp_to_kafka;
 use flatbuffers::FlatBufferBuilder;
-use rust_data_stream_processor::WiringConfigRecord;
-use rust_data_stream_processor::data_processing::process_udp_to_kafka;
 use std::hint::black_box;
 
 const VALID_TIMESTAMP: u64 = (26 << (32 + 24))

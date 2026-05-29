@@ -73,9 +73,9 @@ jobs:
         with:
           name: ${{ format('debug-{0}', matrix.os) }}
           path: |
-            target/debug/rust-data-stream-processor
-            target/debug/rust-data-stream-processor.exe
-            target/debug/rust-data-stream-processor.pdb
+            target/debug/event-udp-to-kafka
+            target/debug/event-udp-to-kafka.exe
+            target/debug/event-udp-to-kafka.pdb
           if-no-files-found: error
           retention-days: 1
       - name: Upload artifacts (release)
@@ -83,9 +83,9 @@ jobs:
         with:
           name: ${{ format('release-{0}', matrix.os) }}
           path: |
-            target/release/rust-data-stream-processor
-            target/release/rust-data-stream-processor.exe
-            target/release/rust-data-stream-processor.pdb
+            target/release/event-udp-to-kafka
+            target/release/event-udp-to-kafka.exe
+            target/release/event-udp-to-kafka.pdb
           if-no-files-found: error
           retention-days: 1
   results:

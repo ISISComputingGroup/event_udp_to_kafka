@@ -1,37 +1,11 @@
-#FROM rust:alpine as builder
-#
-#WORKDIR /app/src
-#RUN USER=root
-#
-#RUN apk update && apk add pkgconfig openssl-dev libc-dev openssl alpine-sdk perl
-#COPY ./ ./
-#RUN cargo build --release
-#
-#FROM alpine:latest
-#WORKDIR /app
-#RUN apk update \
-#    && apk add openssl ca-certificates
-#
-#
-#COPY --from=builder /app/src/target/release/rust-data-stream-processor /app/rust-data-stream-processor
-#
-#CMD ["/app/rust-data-stream-processor "]
+FROM rust:latest AS builder
+RUN apt-get update && apt-get install -y cmake && rm -rf /var/lib/apt/lists/*
+WORKDIR /usr/src/event_udp_to_kafka
+COPY . .
+RUN cargo install --path .
 
-
-
-FROM rockylinux:9-minimal
-LABEL authors="Gitlab CI Build"
-
-#ADD /target/release/rust-data-stream-processor /
-##RUN chmod -x rust-data-stream-processor
-##RUN chmod 777 rust-data-stream-processor
-##RUN ls
-#ENTRYPOINT ["./rust-data-stream-processor"]
-
-
-
-ADD /target/release/* ./
-ADD /src/config/*.csv ./config/
-#RUN apk update && apk add openssl ca-certificates
-RUN ls
-CMD ["./rust-data-stream-processor"]
+FROM debian:stable-slim
+RUN apt-get update && apt-get install -y libcurl4-openssl-dev && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /usr/local/cargo/bin/event-udp-to-kafka /usr/local/bin/event-udp-to-kafka
+COPY ./src/config/* .
+CMD ["event-udp-to-kafka"]
