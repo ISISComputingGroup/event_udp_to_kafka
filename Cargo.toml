@@ -10,7 +10,7 @@ lto = "thin"
 clap = { version = "4.6.1", features = ["derive"] }
 tokio = { version = "1.51.1", features = ["full"] }
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
+serde_json = "1.0.150"
 chrono = "0.4.44"
 csv = "1.4.0"
 influxdb2 = "0.5.2"
