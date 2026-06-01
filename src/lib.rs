@@ -1,4 +1,4 @@
-//! # `data-stream-processor`
+//! # `event_udp_to_kafka`
 //!
 //! This module listens to an input kafka topic containing JSON payloads
 //! of the following form:
@@ -13,7 +13,7 @@
 //! Where `src` is the IP address from which a message was received, and `packet_data`
 //! is a hexed representation of the received data.
 //!
-//! `data-stream-processor` then converts these received messages to flatbuffers-encoded messages,
+//! `event_udp_to_kafka` then converts these received messages to flatbuffers-encoded messages,
 //! and then sends them to an output topic (usually `_rawEvents`).
 
 pub mod data_processing;
@@ -64,7 +64,7 @@ impl ConsumerContext for CustomContext {
 // A type alias with your custom consumer can be created for convenience.
 type LoggingConsumer = StreamConsumer<CustomContext>;
 
-/// Command-line arguments for the `data-stream-processor`.
+/// Command-line arguments for the `event_udp_to_kafka`.
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Args {
