@@ -1,5 +1,5 @@
 use clap::Parser;
-use rust_data_stream_processor::{Args, WiringConfigRecord, kafka_udp_process, read_csv};
+use event_udp_to_kafka::{Args, WiringConfigRecord, kafka_udp_process, read_csv};
 
 #[tokio::main]
 async fn main() {

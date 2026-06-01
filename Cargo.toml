@@ -1,11 +1,10 @@
 [package]
-name = "rust-data-stream-processor"
+name = "event-udp-to-kafka"
 version = "0.1.0"
 edition = "2024"
 
 [profile.release]
-codegen-units = 1
-lto = "fat"
+lto = "thin"
 
 [dependencies]
 clap = { version = "4.6.0", features = ["derive"] }
