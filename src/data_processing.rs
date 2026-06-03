@@ -2,6 +2,10 @@
 
 use crate::WiringConfigRecord;
 
+use crate::metrics::{
+    INCOMING_UDP_HEADERS, INCOMING_UDP_PACKET_SIZE, INCOMING_UDP_PACKETS, NEUTRON_EVENTS,
+    PROCESSING_ERRORS,
+};
 use crate::udp_message::{HEADER_LEN_BYTES, HEADER_MARKER, UdpMessageView, UdpPacketType};
 use flatbuffers::FlatBufferBuilder;
 use isis_streaming_data_types::flatbuffers_generated::events_ev44::{
@@ -9,6 +13,7 @@ use isis_streaming_data_types::flatbuffers_generated::events_ev44::{
 };
 use itertools::Itertools;
 use log::{error, warn};
+use metrics::counter;
 
 /// Process a hexed string of UDP data to the corresponding flatbuffers messages.
 ///
@@ -48,28 +53,32 @@ pub fn process_udp_bytes_to_kafka<F>(
 ) where
     F: FnMut(&[u8]),
 {
+    counter!(INCOMING_UDP_PACKETS).increment(1);
+    counter!(INCOMING_UDP_PACKET_SIZE).increment(udp_packet.len() as u64);
+
     // Split into the different frames in the packet
     // Filters any empty frames each time
     let frames = packet_to_frames(udp_packet);
 
     for frame in frames {
-        match frame.packet_type() {
-            Some(UdpPacketType::NeutronData) => {
-                let result = process_neutron_frame(fbb, frame, src_ip, wiring_config, &mut sink);
-                if let Err(e) = result {
-                    warn!("Error processing neutron data: {}", e);
-                    // todo: metrics
-                }
+        let packet_type = frame.packet_type();
+
+        counter!(INCOMING_UDP_HEADERS, "type" => packet_type.as_prometheus_label()).increment(1);
+
+        let result = match packet_type {
+            UdpPacketType::NeutronData => {
+                process_neutron_frame(fbb, frame, src_ip, wiring_config, &mut sink)
             }
-            Some(UdpPacketType::SampleEnvironment) => {
-                warn!("Received unimplemented sample environment packet");
-            }
-            Some(UdpPacketType::VetoFrame) => {
-                warn!("Received unimplemented veto packet");
-            }
-            None => {
-                warn!("Received unimplemented packet type");
-            }
+            _ => Err("unimplemented packet type"),
+        };
+
+        if let Err(e) = result {
+            warn!(
+                "Error processing {} packet: {}",
+                packet_type.as_prometheus_label(),
+                e
+            );
+            counter!(PROCESSING_ERRORS, "type" => packet_type.as_prometheus_label()).increment(1);
         }
     }
 }
@@ -150,7 +159,8 @@ where
         return Err("No events within frame");
     }
 
-    // Trying with EV44 Packets
+    counter!(NEUTRON_EVENTS).increment(tofs.len() as u64);
+
     send_ev44(
         fbb,
         "rust_proc",

@@ -86,12 +86,12 @@ impl<'a> UdpMessageView<'a> {
     }
 
     /// Packet type.
-    pub fn packet_type(&self) -> Option<UdpPacketType> {
+    pub fn packet_type(&self) -> UdpPacketType {
         match &self.header_word(1) {
-            NEUTRON_HEADER => Some(UdpPacketType::NeutronData),
-            VETO_FRAME_HEADER => Some(UdpPacketType::VetoFrame),
-            SE_FRAME_HEADER => Some(UdpPacketType::SampleEnvironment),
-            _ => None,
+            NEUTRON_HEADER => UdpPacketType::NeutronData,
+            VETO_FRAME_HEADER => UdpPacketType::VetoFrame,
+            SE_FRAME_HEADER => UdpPacketType::SampleEnvironment,
+            _ => UdpPacketType::Invalid,
         }
     }
 
@@ -104,10 +104,18 @@ impl<'a> UdpMessageView<'a> {
 }
 
 /// Types of packets we may receive over UDP.
+#[derive(Debug, strum::EnumIter, strum::IntoStaticStr)]
 pub enum UdpPacketType {
     VetoFrame,
     SampleEnvironment,
     NeutronData,
+    Invalid,
+}
+
+impl UdpPacketType {
+    pub fn as_prometheus_label(&self) -> &'static str {
+        self.into()
+    }
 }
 
 #[cfg(test)]
