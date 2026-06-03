@@ -11,6 +11,7 @@ pub const INCOMING_UDP_PACKETS: &str = "udp2kafka_incoming_udp_packets";
 pub const INCOMING_UDP_PACKET_SIZE: &str = "udp2kafka_incoming_udp_packet_size";
 
 pub const INCOMING_UDP_HEADERS: &str = "udp2kafka_incoming_udp_headers";
+pub const INCOMING_UDP_PACKET_ERRORS: &str = "udp2kafka_incoming_udp_packet_errors";
 
 pub const PROCESSING_ERRORS: &str = "udp2kafka_processing_errors";
 pub const PROCESSING_TIME: &str = "udp2kafka_processing_time";
@@ -51,6 +52,13 @@ pub fn initialize_metrics(config: &EventUdpToKafkaConfig) -> Result<(), String> 
     for typ in UdpPacketType::iter() {
         counter!(INCOMING_UDP_HEADERS, "type" => typ.as_prometheus_label()).absolute(0);
     }
+
+    describe_counter!(
+        INCOMING_UDP_PACKET_ERRORS,
+        Unit::Count,
+        "Number of errors returned from UDP socket recvfrom()"
+    );
+    counter!(INCOMING_UDP_PACKET_ERRORS).absolute(0);
 
     describe_counter!(PROCESSING_ERRORS, Unit::Count, "Message processing errors.");
 

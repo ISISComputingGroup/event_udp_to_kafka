@@ -15,35 +15,9 @@ use itertools::Itertools;
 use log::{error, warn};
 use metrics::counter;
 
-/// Process a hexed string of UDP data to the corresponding flatbuffers messages.
-///
-/// Input: hexed string containing the data from a UDP packet (which may contain multiple
-/// event packets)
-///
-/// Output: Vector of flatbuffers-encoded messages to send to Kafka
-pub fn process_udp_to_kafka<F>(
-    fbb: &mut FlatBufferBuilder,
-    udp_hex: &str,
-    src_ip: &str,
-    wiring_config: &[WiringConfigRecord],
-    sink: F,
-) where
-    F: FnMut(&[u8]),
-{
-    process_udp_bytes_to_kafka(
-        fbb,
-        &hex::decode(udp_hex).expect("Invalid hex"),
-        src_ip,
-        wiring_config,
-        sink,
-    )
-}
-
 /// Process a byte-slice of UDP data to the corresponding flatbuffers messages.
 ///
 /// Input: binary data from a UDP packet (which may contain multiple event packets)
-///
-/// Output: Vector of flatbuffers-encoded messages to send to Kafka
 pub fn process_udp_bytes_to_kafka<F>(
     fbb: &mut FlatBufferBuilder,
     udp_packet: &[u8],
@@ -384,8 +358,6 @@ mod tests {
 
         assert_eq!(n_bytes, 64 + num_events * 8);
 
-        let data = hex::encode(raw_data);
-
         let wiring_config = vec![WiringConfigRecord {
             brd_num: 0,
             brd_ref: "WLSF0".to_owned(),
@@ -400,9 +372,9 @@ mod tests {
         }];
 
         let mut msgs = vec![];
-        process_udp_to_kafka(
+        process_udp_bytes_to_kafka(
             &mut FlatBufferBuilder::new(),
-            &data,
+            &raw_data,
             "192.168.1.1",
             &wiring_config,
             |msg| {
@@ -447,8 +419,6 @@ mod tests {
 
         assert_eq!(n_bytes, 64 + num_events * 8);
 
-        let data = hex::encode(raw_data);
-
         let wiring_config = vec![WiringConfigRecord {
             brd_num: 0,
             brd_ref: "WLSF0".to_owned(),
@@ -462,9 +432,9 @@ mod tests {
             comment: "".to_owned(),
         }];
         let mut msgs = vec![];
-        process_udp_to_kafka(
+        process_udp_bytes_to_kafka(
             &mut FlatBufferBuilder::new(),
-            &data,
+            &raw_data,
             "192.168.1.1",
             &wiring_config,
             |msg| {
@@ -509,8 +479,6 @@ mod tests {
 
         assert_eq!(n_bytes, 64 + num_events * 8);
 
-        let data = hex::encode(raw_data);
-
         let wiring_config = vec![WiringConfigRecord {
             brd_num: 0,
             brd_ref: "WLSF0".to_owned(),
@@ -525,9 +493,9 @@ mod tests {
         }];
 
         let mut msgs = vec![];
-        process_udp_to_kafka(
+        process_udp_bytes_to_kafka(
             &mut FlatBufferBuilder::new(),
-            &data,
+            &raw_data,
             "192.168.1.1",
             &wiring_config,
             |msg| {

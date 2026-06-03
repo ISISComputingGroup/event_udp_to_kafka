@@ -1,33 +1,14 @@
-# UDP Port to bind to
-port = 12345
-
 # UDP address to bind to
-host_ip = "127.0.0.1"
+udp_bind_addr = "127.0.0.1:12345"
 
 # Kafka topic to write flatbuffered messages to
 dest_kafka_topic = "instrument_rawEvents"
-
-# Kafka topic to read raw UDP (as JSON) from
-src_kafka_topic = "instrument_rawJSON"
-
-# Operation mode:
-# - 0 is kafka-to-kafka
-# - 1 is UDP-to-kafka
-mode = 0
 
 # Path to wiring CSV file
 wiring_csv_path = "./src/config/wiring.csv"
 
 # Address on which to bind metrics server
 metrics_bind_addr = "127.0.0.1:8484"
-
-[kafka_consumer]
-"bootstrap.servers" = "itachi.isis.cclrc.ac.uk:9092"
-"group.id" = "instrument_udp2kafka"
-"enable.partition.eof" = "false"
-"session.timeout.ms" = "6000"
-"enable.auto.commit" = "true"
-"auto.offset.reset" = "smallest"
 
 [kafka_producer]
 "bootstrap.servers" = "itachi.isis.cclrc.ac.uk:9092"
