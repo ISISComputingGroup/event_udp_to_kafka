@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["process_udp_bytes_to_kafka","process_udp_to_kafka"]};

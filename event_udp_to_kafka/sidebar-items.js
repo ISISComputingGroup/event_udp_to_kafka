@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["kafka_udp_process","read_csv"],"mod":["config","data_processing","gps_time","metrics","udp_message"],"struct":["Args","WiringConfigRecord"]};
