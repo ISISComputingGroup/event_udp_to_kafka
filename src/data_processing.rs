@@ -3,15 +3,14 @@
 use crate::WiringConfigRecord;
 
 use crate::metrics::{
-    INCOMING_UDP_HEADERS, INCOMING_UDP_PACKET_SIZE, INCOMING_UDP_PACKETS, NEUTRON_EVENTS,
-    PROCESSING_ERRORS,
+    INCOMING_UDP_HEADERS, INCOMING_UDP_NO_HEADER_FOUND, INCOMING_UDP_PACKET_SIZE,
+    INCOMING_UDP_PACKETS, NEUTRON_EVENTS, PROCESSING_ERRORS,
 };
-use crate::udp_message::{HEADER_LEN_BYTES, HEADER_MARKER, UdpMessageView, UdpPacketType};
+use crate::udp_message::{UdpMessageView, UdpPacketType};
 use flatbuffers::FlatBufferBuilder;
 use isis_streaming_data_types::flatbuffers_generated::events_ev44::{
     Event44Message, Event44MessageArgs, finish_event_44_message_buffer,
 };
-use itertools::Itertools;
 use log::{error, warn};
 use metrics::counter;
 
@@ -30,8 +29,6 @@ pub fn process_udp_bytes_to_kafka<F>(
     counter!(INCOMING_UDP_PACKETS).increment(1);
     counter!(INCOMING_UDP_PACKET_SIZE).increment(udp_packet.len() as u64);
 
-    // Split into the different frames in the packet
-    // Filters any empty frames each time
     let frames = packet_to_frames(udp_packet);
 
     for frame in frames {
@@ -61,30 +58,24 @@ pub fn process_udp_bytes_to_kafka<F>(
 ///
 /// Input: a slice of binary UDP data
 ///
-/// Output: a vector of UDP packets; Each UDP message will be complete,
-/// i.e. containing the full UDP data for that message including all header bytes
-/// Vector will be empty if no frames found
+/// Output: a vector of UDP messages
 fn packet_to_frames(udp: &[u8]) -> Vec<UdpMessageView<'_>> {
-    // Find the byte-offsets of the beginning of frame markers.
-    let mut marker_offsets = vec![];
+    let mut result = vec![];
     let mut offset = 0;
 
     while offset < udp.len() {
-        if udp.get(offset..offset + 4) == Some(HEADER_MARKER) {
-            marker_offsets.push(offset);
-            offset += HEADER_LEN_BYTES;
+        if let Some(header_view) = udp.get(offset..).and_then(UdpMessageView::new) {
+            offset += header_view.total_length_bytes();
+            result.push(header_view);
+        } else {
+            // We didn't find a valid header where we were expecting one.
+            // This should not happen in normal operation.
+            error!("No header found at offset {}", offset);
+            counter!(INCOMING_UDP_NO_HEADER_FOUND).increment(1);
+            break;
         }
-        offset += 4; // Advance by a 4-byte word each time.
     }
-
-    // Last message goes up to end of data.
-    marker_offsets.push(udp.len());
-
-    marker_offsets
-        .iter()
-        .tuple_windows()
-        .filter_map(|(&start, &end)| udp.get(start..end).and_then(UdpMessageView::new))
-        .collect()
+    result
 }
 
 /// Convert a neutron data packet to flatbuffers messages.
@@ -304,42 +295,8 @@ fn send_ev44<F>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{TESTING_TIMESTAMP_NS_SINCE_EPOCH, make_raw_neutron_udp_header};
     use isis_streaming_data_types::{DeserializedMessage, deserialize_message};
-
-    /// A valid timestamp, encoded in the UDP packed format.
-    const VALID_TIMESTAMP: u64 = (26 << (32 + 24))  // 2026
-        + (106 << (32 + 15))  // April 16th
-        + (17 << (32 + 10))  // hour 17
-        + (9 << (32 + 4))  // minute 9
-        + (35 << 30)  // second 35
-        + (123 << 20)  // millisecond 123
-        + (456 << 10)  // microsecond 456
-        + (789); // nanosecond 789
-
-    fn make_raw_udp_header(num_events: usize) -> Vec<u8> {
-        // Note: 4-byte words
-        // Total header length: 64 bytes (16 words)
-        [255_u8; 4] // Header word 0: 'running' header marker
-            .iter()
-            .chain(&[255_u8; 4]) // Header word 1: neutron data header marker
-            .chain(&[0_u8; 4]) // Header word 2: information
-            .chain(&[0_u8; 4]) // Header word 3: frame number
-            .chain(&VALID_TIMESTAMP.to_be_bytes()) // Header words 4 & 5: GPS timestamp
-            .chain(&[0_u8; 2]) // Header word 6: period number
-            .chain(&[0_u8; 2]) // Header word 6: unused
-            .chain(&(num_events as u32).to_be_bytes()) // Header word 7: events in frame
-            .chain(&[0_u8; 2]) // Header word 8: ppp_in_frame
-            .chain(&[0_u8; 2]) // Header word 8: unused
-            .chain(&[0_u8; 4]) // Header word 9: vetoes
-            .chain(&[0_u8; 4]) // Header word 10: address of next frame
-            .chain(&[0_u8; 4]) // Header word 11: address of next frame (word address)
-            .chain(&[0_u8; 4]) // Header word 12: streamed frame number
-            .chain(&[0_u8; 4]) // Header word 13: not used
-            .chain(&[0_u8; 4]) // Header word 14: not used
-            .chain(&[0_u8; 4]) // Header word 15: not used
-            .copied()
-            .collect()
-    }
 
     /// tof = 456000 ns
     /// val = 123
@@ -353,7 +310,7 @@ mod tests {
     #[test]
     fn test_process_pc3877ms_events() {
         let num_events = 2;
-        let mut raw_data = make_raw_udp_header(num_events);
+        let mut raw_data = make_raw_neutron_udp_header(num_events, 123);
 
         raw_data.extend_from_slice(&make_pc3877ms_event());
         raw_data.extend_from_slice(&make_pc3877ms_event());
@@ -414,7 +371,7 @@ mod tests {
     #[test]
     fn test_process_pc3544ms_events() {
         let num_events = 2;
-        let mut raw_data = make_raw_udp_header(num_events);
+        let mut raw_data = make_raw_neutron_udp_header(num_events, 123);
 
         raw_data.extend_from_slice(&make_pc3544ms_event());
         raw_data.extend_from_slice(&make_pc3544ms_event());
@@ -474,7 +431,7 @@ mod tests {
     #[test]
     fn test_process_pc3634m1s_events() {
         let num_events = 2;
-        let mut raw_data = make_raw_udp_header(num_events);
+        let mut raw_data = make_raw_neutron_udp_header(num_events, 123);
 
         raw_data.extend_from_slice(&make_pc3634m1s_event());
         raw_data.extend_from_slice(&make_pc3634m1s_event());
@@ -510,7 +467,10 @@ mod tests {
         assert_eq!(msgs.len(), 1);
         match deserialize_message(&msgs[0]) {
             Ok(DeserializedMessage::EventDataEv44(msg)) => {
-                assert_eq!(msg.reference_time().get(0), 1776359375123456789);
+                assert_eq!(
+                    msg.reference_time().get(0) as u64,
+                    TESTING_TIMESTAMP_NS_SINCE_EPOCH
+                );
                 assert_eq!(msg.time_of_flight().unwrap().len(), 2);
 
                 assert_eq!(msg.time_of_flight().unwrap().get(0), 456000);

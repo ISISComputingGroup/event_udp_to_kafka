@@ -12,6 +12,7 @@ pub const INCOMING_UDP_PACKET_SIZE: &str = "udp2kafka_incoming_udp_packet_size";
 
 pub const INCOMING_UDP_HEADERS: &str = "udp2kafka_incoming_udp_headers";
 pub const INCOMING_UDP_PACKET_ERRORS: &str = "udp2kafka_incoming_udp_packet_errors";
+pub const INCOMING_UDP_NO_HEADER_FOUND: &str = "udp2kafka_incoming_udp_no_header_found";
 
 pub const PROCESSING_ERRORS: &str = "udp2kafka_processing_errors";
 pub const PROCESSING_TIME: &str = "udp2kafka_processing_time";
@@ -60,6 +61,13 @@ pub fn initialize_metrics(config: &EventUdpToKafkaConfig) -> Result<(), String> 
         "Number of errors returned from UDP socket recvfrom()"
     );
     counter!(INCOMING_UDP_PACKET_ERRORS).absolute(0);
+
+    describe_counter!(
+        INCOMING_UDP_NO_HEADER_FOUND,
+        Unit::Count,
+        "Number of UDP packets that did not contain a valid header at the expected location"
+    );
+    counter!(INCOMING_UDP_NO_HEADER_FOUND).absolute(0);
 
     describe_counter!(PROCESSING_ERRORS, Unit::Count, "Message processing errors.");
 

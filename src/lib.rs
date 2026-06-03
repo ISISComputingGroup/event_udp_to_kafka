@@ -7,6 +7,7 @@ pub mod config;
 pub mod data_processing;
 pub mod gps_time;
 pub mod metrics;
+pub mod testing;
 pub mod udp_message;
 
 use crate::data_processing::process_udp_bytes_to_kafka;
@@ -87,7 +88,7 @@ fn make_producer(config: &EventUdpToKafkaConfig) -> ThreadedProducer<DefaultProd
         .expect("Producer creation error")
 }
 
-/// Listen to the input Kafka topic and produce messages onto the output Kafka topic forever.
+/// Listen to a UDP socket and produce messages onto the output Kafka topic forever.
 pub fn udp_process(config: &EventUdpToKafkaConfig, wiring_config: Vec<WiringConfigRecord>) -> ! {
     info!("Configuration: {:#?}", config);
 

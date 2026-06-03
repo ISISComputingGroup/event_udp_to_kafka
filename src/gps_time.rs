@@ -91,6 +91,7 @@ impl GpsTime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{TESTING_TIMESTAMP, TESTING_TIMESTAMP_NS_SINCE_EPOCH};
 
     #[test]
     fn test_gps_time_zero() {
@@ -231,18 +232,12 @@ mod tests {
     #[test]
     fn test_nanoseconds_since_epoch() {
         // April 16th, 2026 at 17:09:35.123456789
-        let t = GpsTime::from_packed_repr(
-            (26 << (32 + 24))
-                + (106 << (32 + 15))
-                + (17 << (32 + 10))
-                + (9 << (32 + 4))
-                + (35 << 30)
-                + (123 << 20)
-                + (456 << 10)
-                + (789),
-        );
+        let t = GpsTime::from_packed_repr(TESTING_TIMESTAMP);
 
-        assert_eq!(t.nanoseconds_since_epoch().unwrap(), 1776359375123456789);
+        assert_eq!(
+            t.nanoseconds_since_epoch().unwrap(),
+            TESTING_TIMESTAMP_NS_SINCE_EPOCH
+        );
     }
 
     #[test]

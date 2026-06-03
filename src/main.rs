@@ -5,9 +5,9 @@ use event_udp_to_kafka::{Args, WiringConfigRecord, read_csv, udp_process};
 use log::info;
 
 fn main() {
-    info!("Starting event UDP to Kafka");
-
     env_logger::init();
+
+    info!("Starting event UDP to Kafka");
     let args = Args::parse();
 
     let config: EventUdpToKafkaConfig =
