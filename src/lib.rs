@@ -91,9 +91,9 @@ pub fn read_csv<P: AsRef<Path>>(filename: P) -> Vec<WiringConfigRecord> {
 fn make_producer(config: &EventUdpToKafkaConfig) -> ThreadedProducer<DefaultProducerContext> {
     let mut kafka_producer_config = ClientConfig::new();
 
-    for (k, v) in config.kafka_producer_settings().iter() {
+    config.kafka_producer.iter().for_each(|(k, v)| {
         kafka_producer_config.set(k, v);
-    }
+    });
 
     kafka_producer_config
         .create()
@@ -110,7 +110,7 @@ pub fn udp_process(config: &EventUdpToKafkaConfig, wiring_config: Vec<WiringConf
 
     let mut udp_buf = vec![0; config.udp_buffer_size()];
 
-    let socket = UdpSocket::bind(config.udp_bind_addr()).expect("Unable to bind UDP socket");
+    let socket = UdpSocket::bind(&config.udp_bind_addr).expect("Unable to bind UDP socket");
 
     loop {
         let read_result = socket.recv_from(&mut udp_buf);
@@ -126,7 +126,7 @@ pub fn udp_process(config: &EventUdpToKafkaConfig, wiring_config: Vec<WiringConf
                 &wiring_config,
                 |payload| {
                     let result = producer.send(
-                        rdkafka::producer::BaseRecord::to(config.dest_kafka_topic())
+                        rdkafka::producer::BaseRecord::to(&config.dest_kafka_topic)
                             .key("")
                             .payload(payload),
                     );

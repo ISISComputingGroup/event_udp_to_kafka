@@ -16,8 +16,7 @@ fn main() {
 
     initialize_metrics(&config).expect("Can't initialize metrics");
 
-    let filename = config.wiring_csv_path();
-    let csv_data: Vec<WiringConfigRecord> = read_csv(filename);
+    let csv_data: Vec<WiringConfigRecord> = read_csv(&config.wiring_csv_path);
 
     udp_process(&config, csv_data)
 }
