@@ -1,20 +1,7 @@
 //! # `event_udp_to_kafka`
 //!
-//! This module listens to an input kafka topic containing JSON payloads
-//! of the following form:
-//!
-//! ```json
-//! {
-//!     "src": "192.168.1.1",
-//!     "packet_data": "abc123",
-//! }
-//! ```
-//!
-//! Where `src` is the IP address from which a message was received, and `packet_data`
-//! is a hexed representation of the received data.
-//!
-//! `event_udp_to_kafka` then converts these received messages to flatbuffers-encoded messages,
-//! and then sends them to an output topic (usually `_rawEvents`).
+//! This module listens to UDP data received on a socket, converts this to flatbuffers-encoded
+//! messages, and produces these messages to a Kafka topic (usually `_rawEvents`).
 
 pub mod config;
 pub mod data_processing;
