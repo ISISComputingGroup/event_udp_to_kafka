@@ -3,25 +3,16 @@ use std::collections::HashMap;
 
 #[derive(Debug, Deserialize)]
 pub struct EventUdpToKafkaConfig {
-    /// UDP port to bind to
-    pub port: u32,
+    /// Ip address and port to bind UDP socket to
+    /// e.g. 192.168.1.1:12345
+    pub udp_bind_addr: String,
 
-    /// Ip address of the host (the IP address on which to bind a UDP port)
-    pub host_ip: String,
+    /// UDP recieve buffer size. Should be at least as large as the largest
+    /// single UDP datagram which will be received.
+    udp_buffer_size: Option<usize>,
 
     /// Kafka topic to send the data to
     pub dest_kafka_topic: String,
-
-    /// Kafka topic to get data from
-    pub src_kafka_topic: String,
-
-    /// Script operating mode
-    /// 0 - Consume UDP packets from Kafka SRC topic, process and send back to kafka
-    /// 1 - Gets UDP packets from a local socket binding, processes and kafkas
-    /// This script is mainly designed to function in the Kafka-> Kafka configuration
-    /// With the UDP->Kafka rust buffering via kafka. This gives some failover, and potential throughput options
-    ///
-    mode: Option<u32>,
 
     /// Filepath to the wiring configuration file (csv)
     pub wiring_csv_path: String,
@@ -33,14 +24,10 @@ pub struct EventUdpToKafkaConfig {
     /// Map of Kafka producer configuration properties. Values should be provided as strings.
     /// All properties are passed through to `librdkafka`.
     pub kafka_producer: HashMap<String, String>,
-
-    /// Map of Kafka consumer configuration properties. Values should be provided as strings.
-    /// All properties are passed through to `librdkafka`.
-    pub kafka_consumer: HashMap<String, String>,
 }
 
 impl EventUdpToKafkaConfig {
-    pub fn mode(&self) -> u32 {
-        self.mode.unwrap_or(0)
+    pub fn udp_buffer_size(&self) -> usize {
+        self.udp_buffer_size.unwrap_or(9000)
     }
 }
