@@ -25,7 +25,8 @@ pub fn initialize_metrics(config: &EventUdpToKafkaConfig) -> Result<(), String> 
     let builder = PrometheusBuilder::new()
         .with_recommended_naming(true)
         .with_http_listener(
-            (config.metrics_bind_addr())
+            config
+                .metrics_bind_addr
                 .parse::<SocketAddr>()
                 .map_err(|e| e.to_string())?,
         );

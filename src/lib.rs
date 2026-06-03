@@ -101,7 +101,7 @@ pub fn read_csv<P: AsRef<Path>>(filename: P) -> Vec<WiringConfigRecord> {
 fn make_consumer(config: &EventUdpToKafkaConfig) -> StreamConsumer<DefaultConsumerContext> {
     let mut kafka_consumer_config = ClientConfig::new();
 
-    for (k, v) in config.kafka_consumer_settings().iter() {
+    for (k, v) in config.kafka_consumer.iter() {
         kafka_consumer_config.set(k, v);
     }
 
@@ -115,7 +115,7 @@ fn make_consumer(config: &EventUdpToKafkaConfig) -> StreamConsumer<DefaultConsum
 fn make_producer(config: &EventUdpToKafkaConfig) -> ThreadedProducer<DefaultProducerContext> {
     let mut kafka_producer_config = ClientConfig::new();
 
-    for (k, v) in config.kafka_producer_settings().iter() {
+    for (k, v) in config.kafka_producer.iter() {
         kafka_producer_config.set(k, v);
     }
 
@@ -135,7 +135,7 @@ pub async fn kafka_udp_process(
     let producer = make_producer(config);
 
     consumer
-        .subscribe(&[config.src_kafka_topic()])
+        .subscribe(&[&config.src_kafka_topic])
         .expect("Can't subscribe to specified topics");
 
     info!("Mode 0 - Kafka -> Kafka Processing");
@@ -158,7 +158,7 @@ pub async fn kafka_udp_process(
                     &wiring_config,
                     |payload| {
                         let result = producer.send(
-                            rdkafka::producer::BaseRecord::to(config.dest_kafka_topic())
+                            rdkafka::producer::BaseRecord::to(&config.dest_kafka_topic)
                                 .key("")
                                 .payload(payload),
                         );
