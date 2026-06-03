@@ -6,7 +6,7 @@ pub struct EventUdpToKafkaConfig {
     /// UDP port to bind to
     port: u32,
 
-    /// Ip address of the host, address to bind to
+    /// Ip address of the host (the IP address on which to bind a UDP port)
     host_ip: String,
 
     /// Kafka topic to send the data to

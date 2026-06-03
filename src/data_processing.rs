@@ -73,7 +73,11 @@ pub fn process_udp_bytes_to_kafka<F>(
         };
 
         if let Err(e) = result {
-            warn!("Error processing {:?} packet: {}", packet_type, e);
+            warn!(
+                "Error processing {} packet: {}",
+                packet_type.as_prometheus_label(),
+                e
+            );
             counter!(PROCESSING_ERRORS, "type" => packet_type.as_prometheus_label()).increment(1);
         }
     }
