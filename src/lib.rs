@@ -101,9 +101,9 @@ pub fn read_csv<P: AsRef<Path>>(filename: P) -> Vec<WiringConfigRecord> {
 fn make_consumer(config: &EventUdpToKafkaConfig) -> StreamConsumer<DefaultConsumerContext> {
     let mut kafka_consumer_config = ClientConfig::new();
 
-    for (k, v) in config.kafka_consumer.iter() {
+    config.kafka_consumer.iter().for_each(|(k, v)| {
         kafka_consumer_config.set(k, v);
-    }
+    });
 
     kafka_consumer_config.set_log_level(RDKafkaLogLevel::Debug);
 
@@ -115,9 +115,9 @@ fn make_consumer(config: &EventUdpToKafkaConfig) -> StreamConsumer<DefaultConsum
 fn make_producer(config: &EventUdpToKafkaConfig) -> ThreadedProducer<DefaultProducerContext> {
     let mut kafka_producer_config = ClientConfig::new();
 
-    for (k, v) in config.kafka_producer.iter() {
+    config.kafka_producer.iter().for_each(|(k, v)| {
         kafka_producer_config.set(k, v);
-    }
+    });
 
     kafka_producer_config
         .create()
