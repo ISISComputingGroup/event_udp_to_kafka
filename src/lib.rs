@@ -23,7 +23,7 @@ use crate::metrics::{
 };
 use ::metrics::{counter, histogram};
 use flatbuffers::FlatBufferBuilder;
-use log::{debug, error, info};
+use log::{debug, error};
 use std::fs::File;
 use std::net::UdpSocket;
 use std::path::Path;
@@ -90,8 +90,6 @@ fn make_producer(config: &EventUdpToKafkaConfig) -> ThreadedProducer<DefaultProd
 
 /// Listen to a UDP socket and produce messages onto the output Kafka topic forever.
 pub fn udp_process(config: &EventUdpToKafkaConfig, wiring_config: Vec<WiringConfigRecord>) -> ! {
-    info!("Configuration: {:#?}", config);
-
     let producer = make_producer(config);
 
     let mut fbb = FlatBufferBuilder::new();

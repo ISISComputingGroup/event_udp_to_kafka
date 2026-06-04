@@ -40,7 +40,7 @@ pub fn process_udp_bytes_to_kafka<F>(
             UdpPacketType::NeutronData => {
                 process_neutron_frame(fbb, frame, src_ip, wiring_config, &mut sink)
             }
-            _ => Err("unimplemented packet type"),
+            _ => Err("unimplemented packet type".to_owned()),
         };
 
         if let Err(e) = result {
@@ -58,7 +58,7 @@ pub fn process_udp_bytes_to_kafka<F>(
 ///
 /// Input: a slice of binary UDP data
 ///
-/// Output: a vector of UDP messages
+/// Output: a vector of UDP messages (views onto the underlying byte-slice)
 fn packet_to_frames(udp: &[u8]) -> Vec<UdpMessageView<'_>> {
     let mut result = vec![];
     let mut offset = 0;
@@ -79,28 +79,31 @@ fn packet_to_frames(udp: &[u8]) -> Vec<UdpMessageView<'_>> {
 }
 
 /// Convert a neutron data packet to flatbuffers messages.
-///
-/// Input: a neutron event UDP packet, header, events, and possibly padding zeros.
-/// Output: Vec of Flatbuffers-encoded messages to send to Kafka
 fn process_neutron_frame<F>(
     fbb: &mut FlatBufferBuilder,
     message: UdpMessageView,
     src_ip: &str,
     wiring_config: &[WiringConfigRecord],
     sink: F,
-) -> Result<(), &'static str>
+) -> Result<(), String>
 where
     F: FnMut(&[u8]),
 {
-    let nanoseconds_since_epoch = message
-        .gps_time()
-        .nanoseconds_since_epoch()
-        .ok_or("Invalid frame header; timestamp is invalid")?;
+    let nanoseconds_since_epoch =
+        message
+            .gps_time()
+            .nanoseconds_since_epoch()
+            .ok_or_else(|| {
+                format!(
+                    "Invalid frame header; timestamp {:?} is invalid",
+                    message.gps_time()
+                )
+            })?;
 
     let event_data = message.data_bytes();
 
     if !event_data.len().is_multiple_of(8) {
-        return Err("Event data is not a multiple of pairs of 4-byte words");
+        return Err("Event data is not a multiple of pairs of 4-byte words".to_owned());
     }
 
     let packet_config = wiring_config
@@ -116,12 +119,13 @@ where
         "PC3544MS" => process_pc3544ms_events(event_data, &packet_config),        // MADC PB
         "PC3877MS" => process_pc3877ms_events(event_data, first_packet_config), // WLSF Streaming Electronics
         _ => {
-            return Err("Unknown board type");
+            return Err("Unknown board type".to_owned());
         }
     };
 
     if tofs.is_empty() {
-        return Err("No events within frame");
+        // An empty frame is ok; we don't need to emit an ev44 for it.
+        return Ok(());
     }
 
     counter!(NEUTRON_EVENTS).increment(tofs.len() as u64);
@@ -307,6 +311,21 @@ mod tests {
         ]
     }
 
+    fn pc3877ms_wiring() -> Vec<WiringConfigRecord> {
+        vec![WiringConfigRecord {
+            brd_num: 0,
+            brd_ref: "WLSF0".to_owned(),
+            brd_type: "PC3877MS".to_owned(),
+            packet_type: "Position".to_owned(),
+            sw_pos: 0,
+            streaming_ip: "192.168.1.1".to_owned(),
+            ch: 0,
+            mantid_detector_id_start: 0,
+            mantid_detector_id_length: 1,
+            comment: "".to_owned(),
+        }]
+    }
+
     #[test]
     fn test_process_pc3877ms_events() {
         let num_events = 2;
@@ -319,25 +338,12 @@ mod tests {
 
         assert_eq!(n_bytes, 64 + num_events * 8);
 
-        let wiring_config = vec![WiringConfigRecord {
-            brd_num: 0,
-            brd_ref: "WLSF0".to_owned(),
-            brd_type: "PC3877MS".to_owned(),
-            packet_type: "Position".to_owned(),
-            sw_pos: 0,
-            streaming_ip: "192.168.1.1".to_owned(),
-            ch: 0,
-            mantid_detector_id_start: 0,
-            mantid_detector_id_length: 1,
-            comment: "".to_owned(),
-        }];
-
         let mut msgs = vec![];
         process_udp_bytes_to_kafka(
             &mut FlatBufferBuilder::new(),
             &raw_data,
             "192.168.1.1",
-            &wiring_config,
+            &pc3877ms_wiring(),
             |msg| {
                 msgs.push(msg.to_vec());
             },
@@ -356,6 +362,84 @@ mod tests {
                 assert_eq!(msg.pixel_id().unwrap().get(1), 123);
             }
             _ => panic!("Could not deserialize"),
+        }
+    }
+
+    #[test]
+    fn test_process_pc3877ms_events_with_trailing_padding_zeros() {
+        let mut raw_data = make_raw_neutron_udp_header(2, 123);
+
+        raw_data.extend_from_slice(&make_pc3877ms_event());
+        raw_data.extend_from_slice(&make_pc3877ms_event());
+
+        // Trailing padding zeros
+        raw_data.extend_from_slice(&[0; 1001]);
+
+        let mut msgs = vec![];
+        process_udp_bytes_to_kafka(
+            &mut FlatBufferBuilder::new(),
+            &raw_data,
+            "192.168.1.1",
+            &pc3877ms_wiring(),
+            |msg| {
+                msgs.push(msg.to_vec());
+            },
+        );
+
+        assert_eq!(msgs.len(), 1);
+        match deserialize_message(&msgs[0]) {
+            Ok(DeserializedMessage::EventDataEv44(msg)) => {
+                assert_eq!(msg.reference_time().get(0), 1776359375123456789);
+                assert_eq!(msg.time_of_flight().unwrap().len(), 2);
+
+                assert_eq!(msg.time_of_flight().unwrap().get(0), 456000);
+                assert_eq!(msg.time_of_flight().unwrap().get(1), 456000);
+
+                assert_eq!(msg.pixel_id().unwrap().get(0), 123);
+                assert_eq!(msg.pixel_id().unwrap().get(1), 123);
+            }
+            _ => panic!("Could not deserialize"),
+        }
+    }
+
+    #[test]
+    fn test_process_multiple_pc3877ms_events() {
+        let mut raw_data = make_raw_neutron_udp_header(2, 12);
+
+        raw_data.extend_from_slice(&make_pc3877ms_event());
+        raw_data.extend_from_slice(&make_pc3877ms_event());
+
+        raw_data.extend_from_slice(&make_raw_neutron_udp_header(2, 34));
+
+        raw_data.extend_from_slice(&make_pc3877ms_event());
+        raw_data.extend_from_slice(&make_pc3877ms_event());
+
+        let mut msgs = vec![];
+        process_udp_bytes_to_kafka(
+            &mut FlatBufferBuilder::new(),
+            &raw_data,
+            "192.168.1.1",
+            &pc3877ms_wiring(),
+            |msg| {
+                msgs.push(msg.to_vec());
+            },
+        );
+
+        assert_eq!(msgs.len(), 2);
+        for msg in msgs {
+            match deserialize_message(&msg) {
+                Ok(DeserializedMessage::EventDataEv44(msg)) => {
+                    assert_eq!(msg.reference_time().get(0), 1776359375123456789);
+                    assert_eq!(msg.time_of_flight().unwrap().len(), 2);
+
+                    assert_eq!(msg.time_of_flight().unwrap().get(0), 456000);
+                    assert_eq!(msg.time_of_flight().unwrap().get(1), 456000);
+
+                    assert_eq!(msg.pixel_id().unwrap().get(0), 123);
+                    assert_eq!(msg.pixel_id().unwrap().get(1), 123);
+                }
+                _ => panic!("Could not deserialize msg 1"),
+            }
         }
     }
 
@@ -481,5 +565,25 @@ mod tests {
             }
             _ => panic!("Could not deserialize"),
         }
+    }
+
+    #[test]
+    fn test_process_empty_events() {
+        let raw_data = make_raw_neutron_udp_header(0, 123);
+        let wiring_config = vec![];
+
+        let mut msgs = vec![];
+        process_udp_bytes_to_kafka(
+            &mut FlatBufferBuilder::new(),
+            &raw_data,
+            "192.168.1.1",
+            &wiring_config,
+            |msg| {
+                msgs.push(msg.to_vec());
+            },
+        );
+
+        // No ev44s should have been emitted - no events to emit
+        assert_eq!(msgs.len(), 0);
     }
 }

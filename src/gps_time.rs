@@ -1,6 +1,7 @@
 //! Utilities for GPS timestamps as transmitted over UDP.
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
+use std::fmt::Debug;
 
 /// 8-byte packed representation of a GPS Timestamp, in the format streamed in UDP headers.
 ///
@@ -20,6 +21,21 @@ use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 /// - Nanoseconds: bits 0..=9
 pub struct GpsTime {
     content: u64,
+}
+
+impl Debug for GpsTime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GpsTime")
+            .field("years", &self.years())
+            .field("days", &self.days())
+            .field("hours", &self.hours())
+            .field("minutes", &self.minutes())
+            .field("seconds", &self.seconds())
+            .field("milliseconds", &self.milliseconds())
+            .field("microseconds", &self.microseconds())
+            .field("nanoseconds", &self.nanoseconds())
+            .finish()
+    }
 }
 
 impl GpsTime {
@@ -76,15 +92,22 @@ impl GpsTime {
         );
 
         let timestamp_s: u64 = dt.timestamp().try_into().ok()?;
-        Some(
-            timestamp_s * NANOS_PER_SEC
-                + self.hours() * 3600 * NANOS_PER_SEC
-                + self.minutes() * 60 * NANOS_PER_SEC
-                + self.seconds() * NANOS_PER_SEC
-                + self.milliseconds() * 1_000_000
-                + self.microseconds() * 1000
-                + self.nanoseconds(),
-        )
+
+        (self.hours() < 24 &&
+            self.minutes() < 60 &&
+            self.seconds() <= 60 &&  // Might be *exactly* 60 when a leap-second is added.
+            self.milliseconds() < 1000 &&
+            self.microseconds() < 1000 &&
+            self.nanoseconds() < 1000)
+            .then_some(
+                timestamp_s * NANOS_PER_SEC
+                    + self.hours() * 3600 * NANOS_PER_SEC
+                    + self.minutes() * 60 * NANOS_PER_SEC
+                    + self.seconds() * NANOS_PER_SEC
+                    + self.milliseconds() * 1_000_000
+                    + self.microseconds() * 1000
+                    + self.nanoseconds(),
+            )
     }
 }
 
@@ -254,5 +277,15 @@ mod tests {
         );
 
         assert_eq!(t.nanoseconds_since_epoch(), None);
+    }
+
+    #[test]
+    fn test_gps_time_debug_repr() {
+        let t = GpsTime::from_packed_repr(TESTING_TIMESTAMP);
+
+        assert_eq!(
+            format!("{:?}", t),
+            "GpsTime { years: 26, days: 106, hours: 17, minutes: 9, seconds: 35, milliseconds: 123, microseconds: 456, nanoseconds: 789 }"
+        )
     }
 }
