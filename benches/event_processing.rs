@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use event_udp_to_kafka::WiringConfigRecord;
-use event_udp_to_kafka::data_processing::process_udp_to_kafka;
+use event_udp_to_kafka::data_processing::process_udp_bytes_to_kafka;
 use flatbuffers::FlatBufferBuilder;
 use std::hint::black_box;
 
@@ -42,7 +42,6 @@ fn make_raw_udp_message(num_events: usize) -> Vec<u8> {
 fn benchmark_message_processing(c: &mut Criterion) {
     let raw_data = make_raw_udp_message(100);
     let n_bytes = raw_data.len();
-    let data = hex::encode(raw_data);
 
     let mut group = c.benchmark_group("message_processing");
     group.throughput(Throughput::Bytes(n_bytes as u64));
@@ -68,9 +67,9 @@ fn benchmark_message_processing(c: &mut Criterion) {
             &wiring_config,
             |b, wiring_config| {
                 b.iter(|| {
-                    process_udp_to_kafka(
+                    process_udp_bytes_to_kafka(
                         &mut fbb,
-                        black_box(&data),
+                        black_box(&raw_data),
                         black_box("192.168.1.1"),
                         &wiring_config,
                         |msg| {
