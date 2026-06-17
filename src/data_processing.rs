@@ -3,10 +3,11 @@
 use crate::WiringConfigRecord;
 
 use crate::metrics::{
-    INCOMING_UDP_HEADERS, INCOMING_UDP_NO_HEADER_FOUND, INCOMING_UDP_PACKET_SIZE,
+    INCOMING_UDP_HEADERS, INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_LONG,
+    INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_SHORT, INCOMING_UDP_PACKET_SIZE,
     INCOMING_UDP_PACKETS, NEUTRON_EVENTS, PROCESSING_ERRORS,
 };
-use crate::udp_message::{UdpMessageView, UdpPacketType};
+use crate::udp_message::{InvalidMessageReason, UdpMessageView, UdpPacketType};
 use flatbuffers::FlatBufferBuilder;
 use isis_streaming_data_types::flatbuffers_generated::events_ev44::{
     Event44Message, Event44MessageArgs, finish_event_44_message_buffer,
@@ -64,14 +65,37 @@ fn packet_to_frames(udp: &[u8]) -> Vec<UdpMessageView<'_>> {
     let mut offset = 0;
 
     while offset < udp.len() {
-        if let Some(header_view) = udp.get(offset..).and_then(UdpMessageView::new) {
-            offset += header_view.total_length_bytes();
-            result.push(header_view);
+        if let Some(content) = udp.get(offset..) {
+            match UdpMessageView::new(content) {
+                Ok(view) => {
+                    offset += view.total_length_bytes();
+                    result.push(view);
+                }
+                Err(InvalidMessageReason::ContentTooShort)
+                | Err(InvalidMessageReason::MissingHeaderMarker) => {
+                    // Likely trailing zero padding. This is not an *error*, but indicates
+                    // that there are no more messages in this UDP packet.
+                    break;
+                }
+                Err(InvalidMessageReason::DeclaredLengthTooShort(length)) => {
+                    warn!(
+                        "Packet with invalid declared length {} (shorter than length of a header)",
+                        length
+                    );
+                    counter!(INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_SHORT).increment(1);
+                    break;
+                }
+                Err(InvalidMessageReason::DeclaredLengthTooLong(length)) => {
+                    warn!(
+                        "Packet with invalid declared length {} on content buffer of length {}",
+                        length,
+                        content.len()
+                    );
+                    counter!(INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_LONG).increment(1);
+                    break;
+                }
+            }
         } else {
-            // We didn't find a valid header where we were expecting one.
-            // This should not happen in normal operation.
-            error!("No header found at offset {}", offset);
-            counter!(INCOMING_UDP_NO_HEADER_FOUND).increment(1);
             break;
         }
     }

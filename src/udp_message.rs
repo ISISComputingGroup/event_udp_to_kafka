@@ -23,9 +23,22 @@ pub const HEADER_LEN_WORDS: usize = 16;
 /// Length of header in bytes (16 4-byte words).
 pub const HEADER_LEN_BYTES: usize = HEADER_LEN_WORDS * 4;
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum InvalidMessageReason {
+    /// The content buffer was not long enough to contain a header
+    ContentTooShort,
+    /// The content buffer did not start with a header marker
+    MissingHeaderMarker,
+    /// Declared length is shorter than a header
+    DeclaredLengthTooShort(usize),
+    /// Declared length is longer than content buffer
+    DeclaredLengthTooLong(usize),
+}
+
 /// View onto a UDP message byte-slice.
 ///
 /// This struct provides helper methods for interpreting the bytes from the header of a UDP message.
+#[derive(Debug)]
 pub struct UdpMessageView<'a> {
     content: &'a [u8],
 }
@@ -40,13 +53,26 @@ impl<'a> UdpMessageView<'a> {
     /// - The content buffer does not start with a header marker
     /// - The declared length is less than the length of the header itself
     /// - The content buffer is not long enough to contain the data-length declared by the header
-    pub fn new(content: &[u8]) -> Option<UdpMessageView<'_>> {
-        let view = (content.len() >= HEADER_LEN_BYTES && content.starts_with(HEADER_MARKER))
-            .then_some(UdpMessageView { content })?;
+    pub fn new(content: &[u8]) -> Result<UdpMessageView<'_>, InvalidMessageReason> {
+        if content.len() < HEADER_LEN_BYTES {
+            return Err(InvalidMessageReason::ContentTooShort);
+        }
+        if !content.starts_with(HEADER_MARKER) {
+            return Err(InvalidMessageReason::MissingHeaderMarker);
+        }
 
+        let view = UdpMessageView { content };
         let declared_length = view.total_length_bytes();
 
-        (declared_length >= HEADER_LEN_BYTES && content.len() >= declared_length).then_some(view)
+        if declared_length < HEADER_LEN_BYTES {
+            return Err(InvalidMessageReason::DeclaredLengthTooShort(
+                declared_length,
+            ));
+        }
+        if declared_length > content.len() {
+            return Err(InvalidMessageReason::DeclaredLengthTooLong(declared_length));
+        }
+        Ok(view)
     }
 
     /// Extract a single word from the header
@@ -197,5 +223,40 @@ mod tests {
         let header = UdpMessageView::new(&msg).unwrap();
 
         assert_eq!(header.packet_type(), UdpPacketType::NeutronData);
+    }
+
+    #[test]
+    fn test_invalid_header_short_content() {
+        let view = UdpMessageView::new(&[0]);
+        assert_eq!(view.unwrap_err(), InvalidMessageReason::ContentTooShort);
+    }
+
+    #[test]
+    fn test_invalid_header_no_header_marker() {
+        let view = UdpMessageView::new(&[0; 5000]);
+        assert_eq!(view.unwrap_err(), InvalidMessageReason::MissingHeaderMarker);
+    }
+
+    #[test]
+    fn test_invalid_header_length_longer_than_content() {
+        let view = UdpMessageView::new(&[0xFF; 64]);
+        assert_eq!(
+            view.unwrap_err(),
+            InvalidMessageReason::DeclaredLengthTooLong(0xFFF * 4)
+        );
+    }
+
+    #[test]
+    fn test_invalid_header_length_shorter_than_header() {
+        let bytes = [0xFF; 4]
+            .iter()
+            .chain(&[0; 5000])
+            .copied()
+            .collect::<Vec<_>>();
+        let view = UdpMessageView::new(&bytes);
+        assert_eq!(
+            view.unwrap_err(),
+            InvalidMessageReason::DeclaredLengthTooShort(0)
+        );
     }
 }
