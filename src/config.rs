@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct EventUdpToKafkaConfig {
     /// Ip address and port to bind UDP socket to
     /// e.g. 192.168.1.1:12345
@@ -9,7 +9,11 @@ pub struct EventUdpToKafkaConfig {
 
     /// UDP recieve buffer size. Should be at least as large as the largest
     /// single UDP datagram which will be received.
-    udp_buffer_size: Option<usize>,
+    pub udp_buffer_size: Option<usize>,
+
+    /// Scaling factor to convert the 8-bit 'raw' PPP signal
+    /// into uAh per frame
+    pub raw_to_uah_scaling: Option<f64>,
 
     /// Kafka topic to send the data to
     pub dest_kafka_topic: String,
@@ -29,5 +33,9 @@ pub struct EventUdpToKafkaConfig {
 impl EventUdpToKafkaConfig {
     pub fn udp_buffer_size(&self) -> usize {
         self.udp_buffer_size.unwrap_or(9000)
+    }
+
+    pub fn raw_to_uah_scaling(&self) -> f64 {
+        self.raw_to_uah_scaling.unwrap_or(1.738e-6)
     }
 }

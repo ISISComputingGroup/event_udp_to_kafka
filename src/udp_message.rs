@@ -1,5 +1,6 @@
 //! Utilities for interpreting headers from a UDP message.
 
+use crate::config::EventUdpToKafkaConfig;
 use crate::gps_time::GpsTime;
 
 /// Marker word for "start of header".
@@ -21,9 +22,6 @@ pub const HEADER_LEN_WORDS: usize = 16;
 
 /// Length of header in bytes (16 4-byte words).
 pub const HEADER_LEN_BYTES: usize = HEADER_LEN_WORDS * 4;
-
-/// Scaling factor to convert raw 8-bit protons-per-pulse into uAh per frame
-const RAW_TO_UAH_SCALING: f64 = 1.738e-6;
 
 /// View onto a UDP message byte-slice.
 ///
@@ -88,8 +86,8 @@ impl<'a> UdpMessageView<'a> {
     }
 
     /// uAh delivered during this ISIS frame.
-    pub fn ppp_per_frame(&self) -> f64 {
-        self.raw_ppp_per_frame() as f64 * RAW_TO_UAH_SCALING
+    pub fn ppp_per_frame(&self, config: &EventUdpToKafkaConfig) -> f64 {
+        self.raw_ppp_per_frame() as f64 * config.raw_to_uah_scaling()
     }
 
     /// Veto bits, as transmitted over UDP.
@@ -184,7 +182,13 @@ mod tests {
         let header = UdpMessageView::new(&msg).unwrap();
 
         assert_eq!(header.raw_ppp_per_frame(), 23);
-        assert!((header.ppp_per_frame() - 23. * RAW_TO_UAH_SCALING).abs() < 0.01);
+
+        let config = EventUdpToKafkaConfig {
+            raw_to_uah_scaling: Some(123.456),
+            ..Default::default()
+        };
+
+        assert!((header.ppp_per_frame(&config) - 23. * 123.456).abs() < 0.01);
     }
 
     #[test]
