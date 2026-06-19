@@ -1,37 +1,78 @@
 //! Utilities for interpreting headers from a UDP message.
 
+use crate::config::EventUdpToKafkaConfig;
 use crate::gps_time::GpsTime;
 
 /// Marker word for "start of header".
 pub const HEADER_MARKER: &[u8; 4] = &[0xFF, 0xFF, 0xFF, 0xFF];
 
 /// Marker for a "veto frame" data packet.
-const VETO_FRAME_HEADER: &[u8; 4] = &[0xFC, 0xFF, 0xFF, 0xFF];
+pub const VETO_FRAME_HEADER: &[u8; 4] = &[0b10111111, 0xFF, 0xFF, 0xFF];
 
 /// Marker for a "sample environment" data packet.
-const SE_FRAME_HEADER: &[u8; 4] = &[0xFD, 0xFF, 0xFF, 0xFF];
+pub const SE_FRAME_HEADER: &[u8; 4] = &[0b11011111, 0xFF, 0xFF, 0xFF];
+
+pub const END_OF_RUN_HEADER: &[u8; 4] = &[0b01111111, 0xFF, 0xFF, 0xFF];
 
 /// Marker for a neutron event data packet.
-const NEUTRON_HEADER: &[u8; 4] = &[0xFF, 0xFF, 0xFF, 0xFF];
+pub const NEUTRON_HEADER: &[u8; 4] = &[0xFF, 0xFF, 0xFF, 0xFF];
+
+/// Length of header in words
+pub const HEADER_LEN_WORDS: usize = 16;
 
 /// Length of header in bytes (16 4-byte words).
-pub const HEADER_LEN_BYTES: usize = 16 * 4;
+pub const HEADER_LEN_BYTES: usize = HEADER_LEN_WORDS * 4;
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum InvalidMessageReason {
+    /// The content buffer was not long enough to contain a header
+    ContentTooShort,
+    /// The content buffer did not start with a header marker
+    MissingHeaderMarker,
+    /// Declared length is shorter than a header
+    DeclaredLengthTooShort(usize),
+    /// Declared length is longer than content buffer
+    DeclaredLengthTooLong(usize),
+}
 
 /// View onto a UDP message byte-slice.
 ///
 /// This struct provides helper methods for interpreting the bytes from the header of a UDP message.
+#[derive(Debug)]
 pub struct UdpMessageView<'a> {
     content: &'a [u8],
 }
 
 impl<'a> UdpMessageView<'a> {
-    /// Create a new view onto a UDP message, if the slice is long enough to contain a header,
-    /// starts with a header marker, and is a multiple of 4-byte words.
-    pub fn new(content: &[u8]) -> Option<UdpMessageView<'_>> {
-        (content.len() >= HEADER_LEN_BYTES
-            && content.starts_with(HEADER_MARKER)
-            && content.len().is_multiple_of(4))
-        .then_some(UdpMessageView { content })
+    /// Create a new view onto a UDP message.
+    ///
+    /// The passed-in byte-slice may be longer than the actual message.
+    ///
+    /// This method will return None if:
+    /// - The content buffer is not long enough to contain a header
+    /// - The content buffer does not start with a header marker
+    /// - The declared length is less than the length of the header itself
+    /// - The content buffer is not long enough to contain the data-length declared by the header
+    pub fn new(content: &[u8]) -> Result<UdpMessageView<'_>, InvalidMessageReason> {
+        if content.len() < HEADER_LEN_BYTES {
+            return Err(InvalidMessageReason::ContentTooShort);
+        }
+        if !content.starts_with(HEADER_MARKER) {
+            return Err(InvalidMessageReason::MissingHeaderMarker);
+        }
+
+        let view = UdpMessageView { content };
+        let declared_length = view.total_length_bytes();
+
+        if declared_length < HEADER_LEN_BYTES {
+            return Err(InvalidMessageReason::DeclaredLengthTooShort(
+                declared_length,
+            ));
+        }
+        if declared_length > content.len() {
+            return Err(InvalidMessageReason::DeclaredLengthTooLong(declared_length));
+        }
+        Ok(view)
     }
 
     /// Extract a single word from the header
@@ -40,6 +81,16 @@ impl<'a> UdpMessageView<'a> {
         self.content[4 * n..4 * n + 4]
             .try_into()
             .expect("slice of length 4")
+    }
+
+    /// The total length, in 32-bit words, of the header and data for this message.
+    pub fn total_length_words(&self) -> usize {
+        (u32::from_be_bytes(self.header_word(13)) & 0xFFF) as usize
+    }
+
+    /// The total length, in bytes, of the header and data for this message.
+    pub fn total_length_bytes(&self) -> usize {
+        self.total_length_words() * 4
     }
 
     /// Frame number.
@@ -55,15 +106,14 @@ impl<'a> UdpMessageView<'a> {
         u32::from_be_bytes(self.header_word(7))
     }
 
-    /// Raw protons-per-pulse per frame; u16 exactly as transmitted over UDP.
-    pub fn raw_ppp_per_frame(&self) -> u16 {
-        u16::from_be_bytes(self.header_word(8)[0..2].try_into().unwrap())
+    /// Raw protons-per-pulse per frame; u8 exactly as transmitted over UDP.
+    pub fn raw_ppp_per_frame(&self) -> u8 {
+        self.header_word(8)[0]
     }
 
     /// uAh delivered during this ISIS frame.
-    pub fn ppp_per_frame(&self) -> f64 {
-        const RAW_TO_UAH_SCALING: f64 = 1.738e-6;
-        self.raw_ppp_per_frame() as f64 * RAW_TO_UAH_SCALING
+    pub fn ppp_per_frame(&self, config: &EventUdpToKafkaConfig) -> f64 {
+        self.raw_ppp_per_frame() as f64 * config.raw_to_uah_scaling()
     }
 
     /// Veto bits, as transmitted over UDP.
@@ -91,6 +141,7 @@ impl<'a> UdpMessageView<'a> {
             NEUTRON_HEADER => UdpPacketType::NeutronData,
             VETO_FRAME_HEADER => UdpPacketType::VetoFrame,
             SE_FRAME_HEADER => UdpPacketType::SampleEnvironment,
+            END_OF_RUN_HEADER => UdpPacketType::EndOfRun,
             _ => UdpPacketType::Invalid,
         }
     }
@@ -99,16 +150,17 @@ impl<'a> UdpMessageView<'a> {
     ///
     /// For neutron frames, these bytes contain the neutron event data.
     pub fn data_bytes(&self) -> &[u8] {
-        &self.content[HEADER_LEN_BYTES..]
+        &self.content[HEADER_LEN_BYTES..self.total_length_bytes()]
     }
 }
 
 /// Types of packets we may receive over UDP.
-#[derive(Debug, strum::EnumIter, strum::IntoStaticStr)]
+#[derive(Debug, Eq, PartialEq, strum::EnumIter, strum::IntoStaticStr)]
 pub enum UdpPacketType {
     VetoFrame,
     SampleEnvironment,
     NeutronData,
+    EndOfRun,
     Invalid,
 }
 
@@ -121,38 +173,90 @@ impl UdpPacketType {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn make_raw_udp_message(num_events: usize, ppp: u16, gps_time: u64) -> Vec<u8> {
-        // Note: 4-byte words
-        // Total header length: 64 bytes (16 words)
-        [255_u8; 4] // Header word 0: 'running' header marker
-            .iter()
-            .chain(NEUTRON_HEADER) // Header word 1: neutron data header marker
-            .chain(&[0_u8; 4]) // Header word 2: information
-            .chain(&[0_u8; 4]) // Header word 3: frame number
-            .chain(&gps_time.to_be_bytes()) // Header words 4 & 5: GPS timestamp
-            .chain(&[0_u8; 2]) // Header word 6: period number
-            .chain(&[0_u8; 2]) // Header word 6: unused
-            .chain(&(num_events as u32).to_be_bytes()) // Header word 7: events in frame
-            .chain(&ppp.to_be_bytes()) // Header word 8: ppp_in_frame
-            .chain(&[0_u8; 2]) // Header word 8: unused
-            .chain(&[0_u8; 4]) // Header word 9: vetoes
-            .chain(&[0_u8; 4]) // Header word 10: address of next frame
-            .chain(&[0_u8; 4]) // Header word 11: address of next frame (word address)
-            .chain(&[0_u8; 4]) // Header word 12: streamed frame number
-            .chain(&[0_u8; 4]) // Header word 13: not used
-            .chain(&[0_u8; 4]) // Header word 14: not used
-            .chain(&[0_u8; 4]) // Header word 15: not used
-            .copied()
-            .collect()
-    }
+    use crate::testing::make_raw_neutron_udp_header;
 
     #[test]
     fn test_header() {
-        let msg = make_raw_udp_message(10, 23, 0);
+        let msg = make_raw_neutron_udp_header(10, 23)
+            .into_iter()
+            .chain([0_u8; 9999])
+            .collect::<Vec<_>>();
+        let msg_view = UdpMessageView::new(&msg).unwrap();
+
+        assert_eq!(msg_view.events_in_frame(), 10);
+        assert_eq!(msg_view.total_length_bytes(), HEADER_LEN_BYTES + 8 * 10);
+        assert_eq!(msg_view.total_length_words(), HEADER_LEN_WORDS + 2 * 10);
+
+        assert_eq!(msg_view.data_bytes().len(), 8 * 10);
+    }
+
+    #[test]
+    fn test_header_no_events() {
+        let msg = make_raw_neutron_udp_header(0, 23);
         let header = UdpMessageView::new(&msg).unwrap();
 
-        assert_eq!(header.events_in_frame(), 10);
+        assert_eq!(header.events_in_frame(), 0);
+        assert_eq!(header.total_length_bytes(), HEADER_LEN_BYTES);
+        assert_eq!(header.total_length_words(), HEADER_LEN_WORDS);
+
+        assert_eq!(header.data_bytes().len(), 0);
+    }
+
+    #[test]
+    fn test_header_ppp() {
+        let msg = make_raw_neutron_udp_header(0, 23);
+        let header = UdpMessageView::new(&msg).unwrap();
+
         assert_eq!(header.raw_ppp_per_frame(), 23);
+
+        let config = EventUdpToKafkaConfig {
+            raw_to_uah_scaling: Some(123.456),
+            ..Default::default()
+        };
+
+        assert!((header.ppp_per_frame(&config) - 23. * 123.456).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_message_type() {
+        let msg = make_raw_neutron_udp_header(0, 23);
+        let header = UdpMessageView::new(&msg).unwrap();
+
+        assert_eq!(header.packet_type(), UdpPacketType::NeutronData);
+    }
+
+    #[test]
+    fn test_invalid_header_short_content() {
+        let view = UdpMessageView::new(&[0]);
+        assert_eq!(view.unwrap_err(), InvalidMessageReason::ContentTooShort);
+    }
+
+    #[test]
+    fn test_invalid_header_no_header_marker() {
+        let view = UdpMessageView::new(&[0; 5000]);
+        assert_eq!(view.unwrap_err(), InvalidMessageReason::MissingHeaderMarker);
+    }
+
+    #[test]
+    fn test_invalid_header_length_longer_than_content() {
+        let view = UdpMessageView::new(&[0xFF; 64]);
+        assert_eq!(
+            view.unwrap_err(),
+            InvalidMessageReason::DeclaredLengthTooLong(0xFFF * 4)
+        );
+    }
+
+    #[test]
+    fn test_invalid_header_length_shorter_than_header() {
+        let bytes = [0xFF; 4]
+            .iter()
+            .chain(&[0; 5000])
+            .copied()
+            .collect::<Vec<_>>();
+        let view = UdpMessageView::new(&bytes);
+        assert_eq!(
+            view.unwrap_err(),
+            InvalidMessageReason::DeclaredLengthTooShort(0)
+        );
     }
 }

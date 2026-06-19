@@ -10,6 +10,10 @@ wiring_csv_path = "./src/config/wiring.csv"
 # Address on which to bind metrics server
 metrics_bind_addr = "127.0.0.1:8484"
 
+# Scaling factor to use when converting raw 8-bit PPP to
+# uAh per frame
+raw_to_uah_scaling = 1.738e-6
+
 [kafka_producer]
 "bootstrap.servers" = "itachi.isis.cclrc.ac.uk:9092"
 "message.timeout.ms" = "5000"
