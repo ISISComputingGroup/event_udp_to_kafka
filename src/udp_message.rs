@@ -85,7 +85,7 @@ impl<'a> UdpMessageView<'a> {
 
     /// The total length, in 32-bit words, of the header and data for this message.
     pub fn total_length_words(&self) -> usize {
-        (u32::from_be_bytes(self.header_word(13)) & 0xFFF) as usize
+        ((u32::from_be_bytes(self.header_word(8)) >> 16) & 0xFFF) as usize
     }
 
     /// The total length, in bytes, of the header and data for this message.
@@ -108,7 +108,7 @@ impl<'a> UdpMessageView<'a> {
 
     /// Raw protons-per-pulse per frame; u8 exactly as transmitted over UDP.
     pub fn raw_ppp_per_frame(&self) -> u8 {
-        self.header_word(8)[0]
+        self.header_word(8)[3]
     }
 
     /// uAh delivered during this ISIS frame.
