@@ -1,7 +1,7 @@
 //! Testing & benchmarking utilities.
 //!
 //! These utilities are not used at runtime.
-use crate::udp_message::{HEADER_LEN_WORDS, NEUTRON_HEADER};
+use crate::udp_message::HEADER_LEN_WORDS;
 
 /// A valid GPS timestamp
 pub const TESTING_TIMESTAMP: u64 = (26 << (32 + 24))  // 2026
@@ -21,8 +21,10 @@ pub fn make_raw_neutron_udp_header(num_events: usize, ppp: u8) -> Vec<u8> {
 
     [0xFF; 4] // Header word 0: 'running' header marker
         .iter()
-        .chain(NEUTRON_HEADER) // Header word 1: neutron data header marker
-        .chain(&[0_u8; 4]) // Header word 2: information
+        .chain(&[0xFF]) // Header word 1: marker
+        .chain(&(0_u16).to_be_bytes()) // Header word 1: header type
+        .chain(&[HEADER_LEN_WORDS as u8]) // Header word 1: header length
+        .chain(&[0x00, 0x00, 0x00, 0xFF]) // Header word 2: flags all-high (neutron) + board 0
         .chain(&TESTING_TIMESTAMP.to_be_bytes()) // Header words 3 & 4: GPS timestamp
         .chain(&[0_u8; 4]) // Header word 5: frame number
         .chain(&[0_u8; 2]) // Header word 6: period number

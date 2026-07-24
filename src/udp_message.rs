@@ -6,17 +6,6 @@ use crate::gps_time::GpsTime;
 /// Marker word for "start of header".
 pub const HEADER_MARKER: &[u8; 4] = &[0xFF, 0xFF, 0xFF, 0xFF];
 
-/// Marker for a "veto frame" data packet.
-pub const VETO_FRAME_HEADER: &[u8; 4] = &[0b10111111, 0xFF, 0xFF, 0xFF];
-
-/// Marker for a "sample environment" data packet.
-pub const SE_FRAME_HEADER: &[u8; 4] = &[0b11011111, 0xFF, 0xFF, 0xFF];
-
-pub const END_OF_RUN_HEADER: &[u8; 4] = &[0b01111111, 0xFF, 0xFF, 0xFF];
-
-/// Marker for a neutron event data packet.
-pub const NEUTRON_HEADER: &[u8; 4] = &[0xFF, 0xFF, 0xFF, 0xFF];
-
 /// Length of header in words
 pub const HEADER_LEN_WORDS: usize = 16;
 
@@ -58,6 +47,11 @@ impl<'a> UdpMessageView<'a> {
             return Err(InvalidMessageReason::ContentTooShort);
         }
         if !content.starts_with(HEADER_MARKER) {
+            return Err(InvalidMessageReason::MissingHeaderMarker);
+        }
+        // Word 1, bits 24..=31 (the most-significant, big-endian byte) is always the
+        // header marker byte `0xFF`.
+        if content.get(4) != Some(&0xFF) {
             return Err(InvalidMessageReason::MissingHeaderMarker);
         }
 
@@ -117,8 +111,21 @@ impl<'a> UdpMessageView<'a> {
     }
 
     /// Veto bits, as transmitted over UDP.
-    pub fn vetoes(&self) -> u16 {
-        u16::from_be_bytes(self.header_word(9)[0..2].try_into().unwrap())
+    pub fn vetoes(&self) -> u32 {
+        u32::from_be_bytes(self.header_word(9))
+    }
+
+    /// Header flags (word 2, bits 0..=7), as transmitted over UDP.
+    ///
+    /// These flags are active-low: a bit that is low indicates the corresponding
+    /// condition. When all bits are high, this is a neutron data packet.
+    ///
+    /// - Bit 0: End of run header marker
+    /// - Bit 1: Veto frame packet header marker
+    /// - Bit 2: Pause frame packet header marker
+    /// - Bit 3: No frame sync (not implemented)
+    fn header_flags(&self) -> u8 {
+        self.header_word(2)[3]
     }
 
     /// Period number.
@@ -136,13 +143,21 @@ impl<'a> UdpMessageView<'a> {
     }
 
     /// Packet type.
+    ///
+    /// Determined from the header flags in word 2 (bits 0..=7), which are active-low.
+    /// When all flag bits are high, this is a neutron data packet.
     pub fn packet_type(&self) -> UdpPacketType {
-        match &self.header_word(1) {
-            NEUTRON_HEADER => UdpPacketType::NeutronData,
-            VETO_FRAME_HEADER => UdpPacketType::VetoFrame,
-            SE_FRAME_HEADER => UdpPacketType::SampleEnvironment,
-            END_OF_RUN_HEADER => UdpPacketType::EndOfRun,
-            _ => UdpPacketType::Invalid,
+        let flags = self.header_flags();
+
+        if flags == 0xFF {
+            // All bits high
+            UdpPacketType::NeutronData
+        } else if flags & 1 == 0 {
+            UdpPacketType::EndOfRun
+        } else if flags & (1 << 1) == 0 {
+            UdpPacketType::VetoFrame
+        } else {
+            UdpPacketType::Invalid
         }
     }
 
@@ -248,7 +263,9 @@ mod tests {
 
     #[test]
     fn test_invalid_header_length_shorter_than_header() {
-        let bytes = [0xFF; 4]
+        // Valid word 0 marker and valid word 1 marker byte (0xFF), but a declared
+        // length of zero (word 8 all-zero), which is shorter than a header.
+        let bytes = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
             .iter()
             .chain(&[0; 5000])
             .copied()
