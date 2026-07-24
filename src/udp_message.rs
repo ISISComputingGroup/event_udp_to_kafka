@@ -147,17 +147,11 @@ impl<'a> UdpMessageView<'a> {
     /// Determined from the header flags in word 2 (bits 0..=7), which are active-low.
     /// When all flag bits are high, this is a neutron data packet.
     pub fn packet_type(&self) -> UdpPacketType {
-        let flags = self.header_flags();
-
-        if flags == 0xFF {
-            // All bits high
-            UdpPacketType::NeutronData
-        } else if flags & 1 == 0 {
-            UdpPacketType::EndOfRun
-        } else if flags & (1 << 1) == 0 {
-            UdpPacketType::VetoFrame
-        } else {
-            UdpPacketType::Invalid
+        match self.header_flags() {
+            0b11111111 => UdpPacketType::NeutronData,
+            0b11111110 => UdpPacketType::EndOfRun,
+            0b11111101 => UdpPacketType::VetoFrame,
+            _ => UdpPacketType::Invalid,
         }
     }
 

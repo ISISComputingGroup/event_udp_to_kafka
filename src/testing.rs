@@ -30,9 +30,9 @@ pub fn make_raw_neutron_udp_header(num_events: usize, ppp: u8) -> Vec<u8> {
         .chain(&[0_u8; 2]) // Header word 6: period number
         .chain(&[0_u8; 2]) // Header word 6: unused
         .chain(&(num_events as u32).to_be_bytes()) // Header word 7: events in frame
-        // Header word 8: ppp_in_frame (bits 0..=7) & number of 32-bit words to the
-        // start of the next header (bits 16..=27)
-        .chain(&(((packet_length_words as u32) << 16) | (ppp as u32)).to_be_bytes())
+        .chain(&(packet_length_words as u16).to_be_bytes()) // Header word 8: packet length in words
+        .chain(&[0]) // Header word  8: unused byte
+        .chain(&[ppp]) // Header word 8: protons-per-pulse
         .chain(&[0_u8; 4]) // Header word 9: vetoes
         .chain(&[0_u8; 4]) // Header word 10: address of next frame
         .chain(&[0_u8; 4]) // Header word 11: address of next frame (word address)
