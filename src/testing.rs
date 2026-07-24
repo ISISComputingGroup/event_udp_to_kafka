@@ -23,8 +23,8 @@ pub fn make_raw_neutron_udp_header(num_events: usize, ppp: u8) -> Vec<u8> {
         .iter()
         .chain(NEUTRON_HEADER) // Header word 1: neutron data header marker
         .chain(&[0_u8; 4]) // Header word 2: information
-        .chain(&[0_u8; 4]) // Header word 3: frame number
-        .chain(&TESTING_TIMESTAMP.to_be_bytes()) // Header words 4 & 5: GPS timestamp
+        .chain(&TESTING_TIMESTAMP.to_be_bytes()) // Header words 3 & 4: GPS timestamp
+        .chain(&[0_u8; 4]) // Header word 5: frame number
         .chain(&[0_u8; 2]) // Header word 6: period number
         .chain(&[0_u8; 2]) // Header word 6: unused
         .chain(&(num_events as u32).to_be_bytes()) // Header word 7: events in frame

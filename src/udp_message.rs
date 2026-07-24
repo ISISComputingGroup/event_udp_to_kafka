@@ -95,7 +95,7 @@ impl<'a> UdpMessageView<'a> {
 
     /// Frame number.
     pub fn frame_number(&self) -> u32 {
-        u32::from_be_bytes(self.header_word(3))
+        u32::from_be_bytes(self.header_word(5))
     }
 
     /// Total events in this ISIS frame.
@@ -129,7 +129,7 @@ impl<'a> UdpMessageView<'a> {
     /// GPS timestamp of this message.
     pub fn gps_time(&self) -> GpsTime {
         GpsTime::from_packed_repr(u64::from_be_bytes(
-            self.content[4 * 4..6 * 4]
+            self.content[3 * 4..5 * 4]
                 .try_into()
                 .expect("slice of length 8"),
         ))
