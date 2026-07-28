@@ -3,8 +3,10 @@
 //! This module listens to UDP data received on a socket, converts this to flatbuffers-encoded
 //! messages, and produces these messages to a Kafka topic (usually `_rawEvents`).
 
+pub mod boards;
 pub mod config;
 pub mod data_processing;
+pub mod event_data;
 pub mod gps_time;
 pub mod metrics;
 pub mod testing;
@@ -25,7 +27,7 @@ use ::metrics::{counter, histogram};
 use flatbuffers::FlatBufferBuilder;
 use log::{debug, error};
 use std::fs::File;
-use std::net::UdpSocket;
+use std::net::{IpAddr, UdpSocket};
 use std::path::Path;
 use std::time::Instant;
 
@@ -49,14 +51,12 @@ pub struct WiringConfigRecord {
     pub brd_num: u8,
     #[serde(rename = "BRD_Ref")]
     pub brd_ref: String,
-    #[serde(rename = "BRD_Type")]
-    pub brd_type: String,
     #[serde(rename = "Packet_Type")]
     pub packet_type: String,
     #[serde(rename = "SW_Pos")]
     pub sw_pos: u8,
     #[serde(rename = "StreamingIP")]
-    pub streaming_ip: String,
+    pub streaming_ip: IpAddr,
     #[serde(rename = "CH")]
     pub ch: u8,
     #[serde(rename = "Mantid_DetectorID_Start")]
@@ -103,7 +103,7 @@ pub fn udp_process(config: &EventUdpToKafkaConfig, wiring_config: Vec<WiringConf
 
         if let Ok((number_of_bytes, src_sock_addr)) = read_result {
             let now = Instant::now();
-            let src_ip = src_sock_addr.ip().to_string();
+            let src_ip = src_sock_addr.ip();
 
             process_udp_bytes_to_kafka(
                 &mut fbb,

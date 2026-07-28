@@ -128,9 +128,23 @@ impl<'a> UdpMessageView<'a> {
         self.header_word(2)[3]
     }
 
+    /// The board type, as transmitted over UDP.
+    /// For example, for a PC3544MS board, this will be 3544.
+    pub fn board_type(&self) -> u16 {
+        u16::from_be_bytes(
+            self.header_word(2)[0..2]
+                .try_into()
+                .expect("slice of length 2"),
+        )
+    }
+
     /// Period number.
     pub fn period_number(&self) -> u16 {
-        u16::from_be_bytes(self.header_word(6)[0..2].try_into().unwrap())
+        u16::from_be_bytes(
+            self.header_word(6)[0..2]
+                .try_into()
+                .expect("slice of length 2"),
+        )
     }
 
     /// GPS timestamp of this message.
@@ -186,7 +200,7 @@ mod tests {
 
     #[test]
     fn test_header() {
-        let msg = make_raw_neutron_udp_header(10, 23)
+        let msg = make_raw_neutron_udp_header(10, 23, 3544)
             .into_iter()
             .chain([0_u8; 9999])
             .collect::<Vec<_>>();
@@ -195,13 +209,14 @@ mod tests {
         assert_eq!(msg_view.events_in_frame(), 10);
         assert_eq!(msg_view.total_length_bytes(), HEADER_LEN_BYTES + 8 * 10);
         assert_eq!(msg_view.total_length_words(), HEADER_LEN_WORDS + 2 * 10);
+        assert_eq!(msg_view.board_type(), 3544);
 
         assert_eq!(msg_view.data_bytes().len(), 8 * 10);
     }
 
     #[test]
     fn test_header_no_events() {
-        let msg = make_raw_neutron_udp_header(0, 23);
+        let msg = make_raw_neutron_udp_header(0, 23, 0);
         let header = UdpMessageView::new(&msg).unwrap();
 
         assert_eq!(header.events_in_frame(), 0);
@@ -213,22 +228,20 @@ mod tests {
 
     #[test]
     fn test_header_ppp() {
-        let msg = make_raw_neutron_udp_header(0, 23);
+        let msg = make_raw_neutron_udp_header(0, 23, 0);
         let header = UdpMessageView::new(&msg).unwrap();
 
         assert_eq!(header.raw_ppp_per_frame(), 23);
 
-        let config = EventUdpToKafkaConfig {
-            raw_to_uah_scaling: Some(123.456),
-            ..Default::default()
-        };
+        let mut config = EventUdpToKafkaConfig::make_default_config();
+        config.raw_to_uah_scaling = Some(123.456);
 
         assert!((header.ppp_per_frame(&config) - 23. * 123.456).abs() < 0.01);
     }
 
     #[test]
     fn test_message_type() {
-        let msg = make_raw_neutron_udp_header(0, 23);
+        let msg = make_raw_neutron_udp_header(0, 23, 0);
         let header = UdpMessageView::new(&msg).unwrap();
 
         assert_eq!(header.packet_type(), UdpPacketType::NeutronData);
