@@ -1,10 +1,8 @@
-use crate::WiringConfigRecord;
 use crate::boards::pc3544ms::Pc3544ms;
 use crate::boards::pc3634m1s::Pc3634m1s;
 use crate::boards::pc3877ms::Pc3877ms;
 use crate::event_data::EventData;
 use anyhow::anyhow;
-use std::net::IpAddr;
 
 pub mod pc3544ms;
 pub mod pc3634m1s;
@@ -26,10 +24,7 @@ pub trait Board {
     /// - ``data``: the raw UDP data to be parsed. Excludes all header bytes. May be empty.
     /// - ``wiring_config``: slice of ``WiringConfigRecord``s which correspond to the source IP
     ///   of this packet. This may contain multiple entries.
-    fn parse_raw_data(
-        data: &[u8],
-        wiring_config: &[&WiringConfigRecord],
-    ) -> anyhow::Result<EventData>;
+    fn parse_raw_data(board_specific_parameters: &[u8], data: &[u8]) -> anyhow::Result<EventData>;
 }
 
 /// Testing utilities for a board. These may be used by unit tests and benchmarks,
@@ -41,30 +36,25 @@ pub trait TestableBoard: Board {
     /// of a typical real event.
     fn make_fake_event() -> Vec<u8>;
 
-    /// Return one or more WiringConfigRecords suitable for decoding the event returned
-    /// by ``make_fake_event``.
+    /// Return a board-specific header data suitable for decoding messages from this board.
     ///
     /// This should be representative of a real configuration; for example, if the board
-    /// would typically have one wiring row per channel, then this should return multiple
-    /// ``WiringConfigRecord``s.
-    ///
-    /// If the IP address is specified, the source IP of the returned wiring config should
-    /// match the provided IP.
-    fn make_fake_wiring_config(src_ip: Option<IpAddr>) -> Vec<WiringConfigRecord>;
+    /// would typically have multiple channels, this should use a non-zero channel.
+    fn make_fake_board_specific_header_data() -> Vec<u8>;
 }
 
 pub fn parse_board_data(
     board_type: u16,
+    board_specific_parameters: &[u8],
     data: &[u8],
-    wiring_config: &[&WiringConfigRecord],
 ) -> anyhow::Result<EventData> {
     if data.is_empty() {
         return Ok(EventData::default());
     }
     match board_type {
-        Pc3544ms::BOARD_ID => Pc3544ms::parse_raw_data(data, wiring_config),
-        Pc3634m1s::BOARD_ID => Pc3634m1s::parse_raw_data(data, wiring_config),
-        Pc3877ms::BOARD_ID => Pc3877ms::parse_raw_data(data, wiring_config),
+        Pc3544ms::BOARD_ID => Pc3544ms::parse_raw_data(board_specific_parameters, data),
+        Pc3634m1s::BOARD_ID => Pc3634m1s::parse_raw_data(board_specific_parameters, data),
+        Pc3877ms::BOARD_ID => Pc3877ms::parse_raw_data(board_specific_parameters, data),
         _ => Err(anyhow!("unknown board type {}", board_type)),
     }
 }
@@ -77,9 +67,10 @@ mod tests {
     fn test_parse_board_data() {
         // empty data -> empty event list regardless of board type
         assert!(parse_board_data(0, &[], &[]).is_ok());
+
         // If a board type is provided but we don't have a handler for it, should get an error
         assert!(
-            parse_board_data(0, &[0; 8], &[])
+            parse_board_data(0, &[], &[0; 8])
                 .is_err_and(|e| e.to_string().contains("unknown board type"))
         );
     }

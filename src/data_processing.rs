@@ -1,6 +1,5 @@
 //! Utilities for converting UDP bytes to flatbuffers-encoded messages.
 
-use crate::WiringConfigRecord;
 use anyhow::{Context, anyhow};
 use std::net::IpAddr;
 
@@ -25,7 +24,6 @@ pub fn process_udp_bytes_to_kafka<F>(
     fbb: &mut FlatBufferBuilder,
     udp_packet: &[u8],
     src_ip: &IpAddr,
-    wiring_config: &[WiringConfigRecord],
     mut sink: F,
 ) where
     F: FnMut(&[u8]),
@@ -41,9 +39,7 @@ pub fn process_udp_bytes_to_kafka<F>(
         counter!(INCOMING_UDP_HEADERS, "type" => packet_type.as_prometheus_label()).increment(1);
 
         let result = match packet_type {
-            UdpPacketType::NeutronData => {
-                process_neutron_frame(fbb, frame, src_ip, wiring_config, &mut sink)
-            }
+            UdpPacketType::NeutronData => process_neutron_frame(fbb, frame, src_ip, &mut sink),
             _ => Err(anyhow!("unimplemented packet type")),
         };
 
@@ -109,8 +105,7 @@ fn packet_to_frames(udp: &[u8]) -> Vec<UdpMessageView<'_>> {
 fn process_neutron_frame<F>(
     fbb: &mut FlatBufferBuilder,
     message: UdpMessageView,
-    src_ip: &IpAddr,
-    wiring_config: &[WiringConfigRecord],
+    _src_ip: &IpAddr,
     sink: F,
 ) -> anyhow::Result<()>
 where
@@ -127,15 +122,10 @@ where
                 )
             })?;
 
-    let wiring_config_for_this_ip = wiring_config
-        .iter()
-        .filter(|line| &line.streaming_ip == src_ip)
-        .collect::<Vec<&WiringConfigRecord>>();
-
     let events = parse_board_data(
         message.board_type(),
+        message.board_specific_parameters(),
         message.data_bytes(),
-        &wiring_config_for_this_ip,
     )?;
 
     if events.is_empty() {
@@ -187,25 +177,22 @@ fn send_ev44<F>(
 
 #[cfg(test)]
 mod tests {
-    use crate::boards::TestableBoard;
     use crate::boards::pc3877ms::Pc3877ms;
     use crate::data_processing::process_udp_bytes_to_kafka;
-    use crate::testing::make_raw_neutron_udp_header;
+    use crate::testing::{make_udp_header, make_udp_packet};
     use flatbuffers::FlatBufferBuilder;
     use isis_streaming_data_types::{DeserializedMessage, deserialize_message};
     use std::net::Ipv4Addr;
 
     #[test]
     fn test_process_empty_events() {
-        let raw_data = make_raw_neutron_udp_header(0, 123, 3544);
-        let wiring_config = vec![];
+        let raw_data = make_udp_header::<Pc3877ms>(0, 123);
 
         let mut msgs = vec![];
         process_udp_bytes_to_kafka(
             &mut FlatBufferBuilder::new(),
             &raw_data,
             &Ipv4Addr::new(192, 168, 1, 1).into(),
-            &wiring_config,
             |msg| {
                 msgs.push(msg.to_vec());
             },
@@ -218,10 +205,7 @@ mod tests {
     #[test]
     fn test_full_process_pc3877ms_events() {
         let num_events = 2;
-        let mut raw_data = make_raw_neutron_udp_header(num_events, 123, 3877);
-
-        raw_data.extend_from_slice(&Pc3877ms::make_fake_event());
-        raw_data.extend_from_slice(&Pc3877ms::make_fake_event());
+        let raw_data = make_udp_packet::<Pc3877ms>(num_events, 123);
 
         let n_bytes = raw_data.len();
 
@@ -234,7 +218,6 @@ mod tests {
             &mut FlatBufferBuilder::new(),
             &raw_data,
             &ip.into(),
-            &Pc3877ms::make_fake_wiring_config(Some(ip.into())),
             |msg| {
                 msgs.push(msg.to_vec());
             },
@@ -258,10 +241,7 @@ mod tests {
 
     #[test]
     fn test_full_process_pc3877ms_events_with_trailing_padding_zeros() {
-        let mut raw_data = make_raw_neutron_udp_header(2, 123, 3877);
-
-        raw_data.extend_from_slice(&Pc3877ms::make_fake_event());
-        raw_data.extend_from_slice(&Pc3877ms::make_fake_event());
+        let mut raw_data = make_udp_packet::<Pc3877ms>(2, 123);
 
         // Trailing padding zeros
         raw_data.extend_from_slice(&[0; 1001]);
@@ -273,7 +253,6 @@ mod tests {
             &mut FlatBufferBuilder::new(),
             &raw_data,
             &ip.into(),
-            &Pc3877ms::make_fake_wiring_config(Some(ip.into())),
             |msg| {
                 msgs.push(msg.to_vec());
             },
@@ -297,15 +276,8 @@ mod tests {
 
     #[test]
     fn test_full_process_multiple_pc3877ms_events() {
-        let mut raw_data = make_raw_neutron_udp_header(2, 12, 3877);
-
-        raw_data.extend_from_slice(&Pc3877ms::make_fake_event());
-        raw_data.extend_from_slice(&Pc3877ms::make_fake_event());
-
-        raw_data.extend_from_slice(&make_raw_neutron_udp_header(2, 34, 3877));
-
-        raw_data.extend_from_slice(&Pc3877ms::make_fake_event());
-        raw_data.extend_from_slice(&Pc3877ms::make_fake_event());
+        let mut raw_data = make_udp_packet::<Pc3877ms>(2, 12);
+        raw_data.extend_from_slice(&make_udp_packet::<Pc3877ms>(2, 34));
 
         let ip = Ipv4Addr::new(192, 168, 1, 1);
 
@@ -314,7 +286,6 @@ mod tests {
             &mut FlatBufferBuilder::new(),
             &raw_data,
             &ip.into(),
-            &Pc3877ms::make_fake_wiring_config(Some(ip.into())),
             |msg| {
                 msgs.push(msg.to_vec());
             },

@@ -3,6 +3,7 @@
 //! This module listens to UDP data received on a socket, converts this to flatbuffers-encoded
 //! messages, and produces these messages to a Kafka topic (usually `_rawEvents`).
 
+pub mod bit_utils;
 pub mod boards;
 pub mod config;
 pub mod data_processing;
@@ -26,9 +27,7 @@ use crate::metrics::{
 use ::metrics::{counter, histogram};
 use flatbuffers::FlatBufferBuilder;
 use log::{debug, error};
-use std::fs::File;
-use std::net::{IpAddr, UdpSocket};
-use std::path::Path;
+use std::net::{UdpSocket};
 use std::time::Instant;
 
 /// Command-line arguments for the `event_udp_to_kafka`.
@@ -41,39 +40,6 @@ pub struct Args {
 
     #[command(flatten)]
     pub verbosity: clap_verbosity_flag::Verbosity,
-}
-
-/// Wiring table information.
-#[derive(Debug, serde::Deserialize)]
-#[allow(unused)]
-pub struct WiringConfigRecord {
-    #[serde(rename = "BRD_NUM")]
-    pub brd_num: u8,
-    #[serde(rename = "BRD_Ref")]
-    pub brd_ref: String,
-    #[serde(rename = "Packet_Type")]
-    pub packet_type: String,
-    #[serde(rename = "SW_Pos")]
-    pub sw_pos: u8,
-    #[serde(rename = "StreamingIP")]
-    pub streaming_ip: IpAddr,
-    #[serde(rename = "CH")]
-    pub ch: u8,
-    #[serde(rename = "Mantid_DetectorID_Start")]
-    pub mantid_detector_id_start: u32,
-    #[serde(rename = "Mantid_Detector_ID_Lenght")]
-    pub mantid_detector_id_length: u32,
-    #[serde(rename = "Comment")]
-    pub comment: String,
-}
-
-pub fn read_csv<P: AsRef<Path>>(filename: P) -> Vec<WiringConfigRecord> {
-    let file = File::open(filename).unwrap();
-    let mut rdr = csv::Reader::from_reader(file);
-
-    rdr.deserialize()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap_or_else(|err| panic!("Cannot deserialize wiring table line: {err}"))
 }
 
 fn make_producer(config: &EventUdpToKafkaConfig) -> ThreadedProducer<DefaultProducerContext> {
@@ -89,7 +55,7 @@ fn make_producer(config: &EventUdpToKafkaConfig) -> ThreadedProducer<DefaultProd
 }
 
 /// Listen to a UDP socket and produce messages onto the output Kafka topic forever.
-pub fn udp_process(config: &EventUdpToKafkaConfig, wiring_config: Vec<WiringConfigRecord>) -> ! {
+pub fn udp_process(config: &EventUdpToKafkaConfig) -> ! {
     let producer = make_producer(config);
 
     let mut fbb = FlatBufferBuilder::new();
@@ -105,27 +71,21 @@ pub fn udp_process(config: &EventUdpToKafkaConfig, wiring_config: Vec<WiringConf
             let now = Instant::now();
             let src_ip = src_sock_addr.ip();
 
-            process_udp_bytes_to_kafka(
-                &mut fbb,
-                &udp_buf[..number_of_bytes],
-                &src_ip,
-                &wiring_config,
-                |payload| {
-                    let result = producer.send(
-                        rdkafka::producer::BaseRecord::to(&config.dest_kafka_topic)
-                            .key("")
-                            .payload(payload),
-                    );
+            process_udp_bytes_to_kafka(&mut fbb, &udp_buf[..number_of_bytes], &src_ip, |payload| {
+                let result = producer.send(
+                    rdkafka::producer::BaseRecord::to(&config.dest_kafka_topic)
+                        .key("")
+                        .payload(payload),
+                );
 
-                    if let Err(e) = result {
-                        error!("Kafka error: {:?}", e);
-                        counter!(OUTGOING_KAFKA_PRODUCE_ERRORS).increment(1);
-                    } else {
-                        counter!(OUTGOING_KAFKA_MESSAGES).increment(1);
-                        counter!(OUTGOING_KAFKA_MESSAGE_SIZE).increment(payload.len() as u64);
-                    }
-                },
-            );
+                if let Err(e) = result {
+                    error!("Kafka error: {:?}", e);
+                    counter!(OUTGOING_KAFKA_PRODUCE_ERRORS).increment(1);
+                } else {
+                    counter!(OUTGOING_KAFKA_MESSAGES).increment(1);
+                    counter!(OUTGOING_KAFKA_MESSAGE_SIZE).increment(payload.len() as u64);
+                }
+            });
 
             let elapsed = now.elapsed();
             debug!(
