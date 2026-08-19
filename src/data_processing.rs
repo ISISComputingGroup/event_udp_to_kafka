@@ -265,7 +265,6 @@ mod tests {
             Ok(DeserializedMessage::PulseMetadataPu00(_)) => {}
             _ => panic!("Incorrect message type"),
         }
-
     }
 
     #[test]
@@ -290,7 +289,7 @@ mod tests {
             },
         );
 
-        assert_eq!(msgs.len(), 2);  // pu00, ev44
+        assert_eq!(msgs.len(), 2); // pu00, ev44
         match deserialize_message(&msgs[1]) {
             Ok(DeserializedMessage::EventDataEv44(msg)) => {
                 assert_eq!(msg.reference_time().get(0), 1776359375123456789);
@@ -338,7 +337,7 @@ mod tests {
             },
         );
 
-        assert_eq!(msgs.len(), 2);  // one pu00, one ev44
+        assert_eq!(msgs.len(), 2); // one pu00, one ev44
         match deserialize_message(&msgs[1]) {
             Ok(DeserializedMessage::EventDataEv44(msg)) => {
                 assert_eq!(msg.reference_time().get(0), 1776359375123456789);
