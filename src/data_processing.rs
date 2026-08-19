@@ -7,7 +7,7 @@ use crate::config::EventUdpToKafkaConfig;
 use crate::metrics::{
     INCOMING_UDP_HEADERS, INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_LONG,
     INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_SHORT, INCOMING_UDP_PACKET_SIZE,
-    INCOMING_UDP_PACKETS, NEUTRON_EVENTS, PROCESSING_ERRORS,
+    INCOMING_UDP_PACKETS, NEUTRON_EVENTS, PROCESSING_ERRORS, STREAMING_CONTROL_BOARD_FRAMES,
 };
 use crate::packet_formats::parse_board_data;
 use crate::udp_message::{InvalidMessageReason, UdpMessageView, UdpPacketType};
@@ -18,7 +18,7 @@ use isis_streaming_data_types::flatbuffers_generated::events_ev44::{
 use isis_streaming_data_types::flatbuffers_generated::pulse_metadata_pu00::{
     Pu00Message, Pu00MessageArgs, finish_pu_00_message_buffer,
 };
-use log::warn;
+use log::{debug, warn};
 use metrics::counter;
 
 /// Process a byte-slice of UDP data to the corresponding flatbuffers messages.
@@ -130,12 +130,6 @@ where
                 )
             })?;
 
-    let events = parse_board_data(
-        message.packet_format_code(),
-        message.board_specific_parameters(),
-        message.data_bytes(),
-    )?;
-
     let is_streaming_control_board = src_ip == &config.streaming_control_board_ip;
 
     // The period number and PPP only ever come from the streaming control board packets.
@@ -148,6 +142,16 @@ where
     // detector board. Downstream consumers, such as `kafka_event_aggregator`, will OR
     // together vetoes from the streaming control board and from each individual detector
     // module, when assembling a frame.
+    if is_streaming_control_board {
+        counter!(STREAMING_CONTROL_BOARD_FRAMES).increment(1);
+        debug!(
+            "Frame header from streaming control board (vetoes = {}, period = {}, ppp = {})",
+            message.vetoes(),
+            message.period_number(),
+            message.ppp_per_frame(config)
+        )
+    }
+
     send_pu00(
         fbb,
         "event_udp_to_kafka",
@@ -158,6 +162,12 @@ where
         is_streaming_control_board.then_some(message.ppp_per_frame(config)),
         &mut sink,
     );
+
+    let events = parse_board_data(
+        message.packet_format_code(),
+        message.board_specific_parameters(),
+        message.data_bytes(),
+    )?;
 
     if !events.is_empty() {
         counter!(NEUTRON_EVENTS).increment(events.len() as u64);

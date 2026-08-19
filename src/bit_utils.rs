@@ -1,7 +1,7 @@
 /// Generate a bit-mask of the specified width
 ///
 /// For example, 3 will become 0b111.
-pub fn mask(num_bits: u32) -> u32 {
+pub const fn mask(num_bits: u32) -> u32 {
     u32::MAX.unbounded_shr(u32::BITS.saturating_sub(num_bits))
 }
 

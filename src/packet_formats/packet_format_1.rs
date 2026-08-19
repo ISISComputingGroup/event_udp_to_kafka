@@ -18,10 +18,10 @@ impl PacketFormat for PacketFormat1 {
         const CLOCK_TICKS_TO_NS: u32 = 20;
 
         if !data.len().is_multiple_of(8) {
-            bail!("Pc3544ms Event data is not a multiple of pairs of 4-byte words");
+            bail!("PacketFormat1 Event data is not a multiple of pairs of 4-byte words");
         }
         if board_specific_parameters.len() != 8 {
-            bail!("Pc3544ms board-specific parameters should have length 8");
+            bail!("PacketFormat1 board-specific parameters should have length 8");
         }
 
         let channel_bits = board_specific_parameters[1];
@@ -29,21 +29,29 @@ impl PacketFormat for PacketFormat1 {
 
         let detector_id_offset = u32::from_be_bytes(board_specific_parameters[4..8].try_into()?);
 
+        // Bit-mask for selecting position out of the second word in each event.
+        let pos_mask = mask(position_bits_per_channel.into());
+
+        // Each increment of 'channel' increments pixel_id by this many pixels.
+        let channel_multiplier = 1_u32.unbounded_shl(position_bits_per_channel as u32);
+
+        // Number of invalid neutron events that didn't start with a correct 7-bit header for
+        // an event.
+        let mut invalid_events = 0;
+
         let (time_of_flight, pixel_id) = data
             .as_chunks::<8>()
             .0
             .iter()
-            .filter_map(|event| {
+            .map(|event| {
                 let tof_word =
                     u32::from_be_bytes(event[0..4].try_into().expect("slice of length 4"));
                 let pos_word =
                     u32::from_be_bytes(event[4..8].try_into().expect("slice of length 4"));
 
                 // Top 7 bits of ToF word should always be 0b1110000 for event data.
-                // If it isn't, something has gone wrong and we shouldn't use this event.
-                if extract_msb(tof_word, 7) != Some(0b1110000) {
-                    counter!(INVALID_NEUTRON_EVENTS).increment(1);
-                    return None;
+                if (event[0] & 0b11111110) != 0b11100000 {
+                    invalid_events += 1;
                 }
 
                 let mut tof = tof_word & mask(25);
@@ -52,14 +60,30 @@ impl PacketFormat for PacketFormat1 {
                 // If we were told channel_bits = 0, we'll get None, which we want to treat as
                 // being channel 0 (since that is then the only possible channel)
                 let channel = extract_msb(pos_word, channel_bits.into()).unwrap_or(0);
-                let mut pos = pos_word & mask(position_bits_per_channel.into());
+                let mut pos = pos_word & pos_mask;
 
                 pos += detector_id_offset;
-                pos += channel * (1_u32.unbounded_shl(position_bits_per_channel as u32));
+                pos += channel * channel_multiplier;
 
-                Some((tof as i32, pos as i32))
+                (tof as i32, pos as i32)
             })
             .unzip();
+
+        if invalid_events > 0 {
+            // If we encountered invalid events, it might be due to:
+            // - A UDP packet corruption
+            // - Parsing non-event data as events, which could be due to a software bug or a
+            //   firmware bug (e.g. the header declared a data length which didn't correspond
+            //   with the real data length).
+            //
+            // In either case, the safest thing to do is to bail and refuse to interpret this
+            // entire message; something has gone badly wrong, and the events cannot be
+            // trusted (even the ones that *happened* to start with the right prefix)
+            counter!(INVALID_NEUTRON_EVENTS).increment(invalid_events);
+            bail!(
+                "PacketFormat1 decoder encountered invalid neutron events; dropping all events in this message."
+            )
+        }
 
         EventData::new(time_of_flight, pixel_id)
     }
