@@ -1,23 +1,28 @@
 use crate::bit_utils::{extract_msb, mask};
-use crate::boards::{Board, EventData, TestableBoard};
 use crate::metrics::INVALID_NEUTRON_EVENTS;
-use anyhow::{bail};
+use crate::packet_formats::{EventData, PacketFormat, TestablePacketFormat};
+use anyhow::bail;
 use metrics::counter;
 
-pub struct Pc3544ms;
+/// Decoder for 'packet format 1'.
+///
+/// The packet format is defined by a common part of the UDP header emitted by hardware.
+pub struct PacketFormat1;
 
-impl Board for Pc3544ms {
-    const BOARD_ID: u16 = 3544;
+impl PacketFormat for PacketFormat1 {
+    /// Packet format code emitted by the hardware is 1 for this type of packet.
+    const PACKET_FORMAT_CODE: u16 = 1;
 
+    /// Decode board-specific parameters + data into events
     fn parse_raw_data(board_specific_parameters: &[u8], data: &[u8]) -> anyhow::Result<EventData> {
+        const CLOCK_TICKS_TO_NS: u32 = 20;
+
         if !data.len().is_multiple_of(8) {
             bail!("Pc3544ms Event data is not a multiple of pairs of 4-byte words");
         }
         if board_specific_parameters.len() != 8 {
             bail!("Pc3544ms board-specific parameters should have length 8");
         }
-
-        const CLOCK_TICKS_TO_NS: u32 = 20;
 
         let channel_bits = board_specific_parameters[1];
         let position_bits_per_channel = board_specific_parameters[3];
@@ -29,8 +34,10 @@ impl Board for Pc3544ms {
             .0
             .iter()
             .filter_map(|event| {
-                let tof_word = u32::from_be_bytes(event[0..4].try_into().unwrap());
-                let pos_word = u32::from_be_bytes(event[4..8].try_into().unwrap());
+                let tof_word =
+                    u32::from_be_bytes(event[0..4].try_into().expect("slice of length 4"));
+                let pos_word =
+                    u32::from_be_bytes(event[4..8].try_into().expect("slice of length 4"));
 
                 // Top 7 bits of ToF word should always be 0b1110000 for event data.
                 // If it isn't, something has gone wrong and we shouldn't use this event.
@@ -38,6 +45,7 @@ impl Board for Pc3544ms {
                     counter!(INVALID_NEUTRON_EVENTS).increment(1);
                     return None;
                 }
+
                 let mut tof = tof_word & mask(25);
                 tof *= CLOCK_TICKS_TO_NS;
 
@@ -57,15 +65,19 @@ impl Board for Pc3544ms {
     }
 }
 
-impl TestableBoard for Pc3544ms {
+impl TestablePacketFormat for PacketFormat1 {
+    const FAKE_EVENT_TOF: i32 = 456_000;
+    const FAKE_EVENT_PIXEL: i32 = 282828 + 1234 + (2 * (2_i32.pow(12)));
+
     fn make_fake_event() -> Vec<u8> {
         // Position packet
         // tof = 456000 ns
         // channel 2, position 1234
         vec![
-            0xE0,  // E0 tof marker
+            0xE0, // E0 tof marker
             0x00, 0x59, 0x10, // 456000ns
-            2, 0xFF, 0xF4, 0xD2, // Channel 2, 0x4D2 = position 1234
+            2,    // Channel 2
+            0xFF, 0xF4, 0xD2, // 0xFFF = diagnostic data, 0x4D2 = position 1234
         ]
     }
 
@@ -73,8 +85,8 @@ impl TestableBoard for Pc3544ms {
         [
             0x78, // Board address
             8,    // Bits for channel
-            12,    // Bits for diagnostic data
-            12,    // Bits for position data
+            12,   // Bits for diagnostic data
+            12,   // Bits for position data
         ]
         .into_iter()
         .chain(282828_u32.to_be_bytes()) // Detector ID offset 282828
@@ -87,34 +99,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_pc3544_event() {
-        let data = Pc3544ms::make_fake_event();
-        let board_specific_header_data = Pc3544ms::make_fake_board_specific_header_data();
+    fn test_parse_event() {
+        let data = PacketFormat1::make_fake_event();
+        let board_specific_header_data = PacketFormat1::make_fake_board_specific_header_data();
 
-        let events = Pc3544ms::parse_raw_data(&board_specific_header_data, &data)
+        let events = PacketFormat1::parse_raw_data(&board_specific_header_data, &data)
             .expect("parsing should work");
 
-        assert_eq!(events.time_of_flight(), [9_120_000]);
-        assert_eq!(events.pixel_id(), [11102078]);
+        assert_eq!(events.time_of_flight(), [PacketFormat1::FAKE_EVENT_TOF]);
+        assert_eq!(events.pixel_id(), [PacketFormat1::FAKE_EVENT_PIXEL]);
     }
 
     #[test]
-    fn test_parse_empty_pc3544_events() {
+    fn test_parse_empty_events() {
         let data = [];
-        let board_specific_header_data = Pc3544ms::make_fake_board_specific_header_data();
+        let board_specific_header_data = PacketFormat1::make_fake_board_specific_header_data();
 
-        let events = Pc3544ms::parse_raw_data(&board_specific_header_data, &data)
+        let events = PacketFormat1::parse_raw_data(&board_specific_header_data, &data)
             .expect("parsing should work");
 
         assert!(events.is_empty())
     }
 
     #[test]
-    fn test_parse_pc3544_event_invalid_length() {
+    fn test_parse_event_invalid_length() {
         let data = vec![0; 9]; // invalid length: 9 bytes
-        let board_specific_header_data = Pc3544ms::make_fake_board_specific_header_data();
+        let board_specific_header_data = PacketFormat1::make_fake_board_specific_header_data();
 
-        let events = Pc3544ms::parse_raw_data(&board_specific_header_data, &data);
+        let events = PacketFormat1::parse_raw_data(&board_specific_header_data, &data);
 
         assert!(events.is_err_and(|e| {
             e.to_string()

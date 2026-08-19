@@ -2,11 +2,7 @@
 ///
 /// For example, 3 will become 0b111.
 pub fn mask(num_bits: u32) -> u32 {
-    match num_bits {
-        0 => 0,
-        32.. => 0xFFFFFFFF,
-        _ => u32::MAX >> (u32::BITS - num_bits),
-    }
+    u32::MAX.unbounded_shr(u32::BITS.saturating_sub(num_bits))
 }
 
 /// Returns the value represented by the `num_bits` most significant
@@ -14,11 +10,7 @@ pub fn mask(num_bits: u32) -> u32 {
 ///
 /// For example, extracting 8 bits from 0x12345678 will return 0x12
 pub fn extract_msb(data: u32, num_bits: u32) -> Option<u32> {
-    if num_bits == 0 || num_bits > u32::BITS {
-        None
-    } else {
-        Some(data >> (u32::BITS - num_bits)) // Shift on unsigned type will zero-extend
-    }
+    data.checked_shr(u32::BITS.checked_sub(num_bits)?)
 }
 
 #[cfg(test)]

@@ -3,16 +3,20 @@
 use anyhow::{Context, anyhow};
 use std::net::IpAddr;
 
-use crate::boards::parse_board_data;
+use crate::config::EventUdpToKafkaConfig;
 use crate::metrics::{
     INCOMING_UDP_HEADERS, INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_LONG,
     INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_SHORT, INCOMING_UDP_PACKET_SIZE,
     INCOMING_UDP_PACKETS, NEUTRON_EVENTS, PROCESSING_ERRORS,
 };
+use crate::packet_formats::parse_board_data;
 use crate::udp_message::{InvalidMessageReason, UdpMessageView, UdpPacketType};
 use flatbuffers::FlatBufferBuilder;
 use isis_streaming_data_types::flatbuffers_generated::events_ev44::{
     Event44Message, Event44MessageArgs, finish_event_44_message_buffer,
+};
+use isis_streaming_data_types::flatbuffers_generated::pulse_metadata_pu00::{
+    Pu00Message, Pu00MessageArgs, finish_pu_00_message_buffer,
 };
 use log::warn;
 use metrics::counter;
@@ -24,6 +28,7 @@ pub fn process_udp_bytes_to_kafka<F>(
     fbb: &mut FlatBufferBuilder,
     udp_packet: &[u8],
     src_ip: &IpAddr,
+    config: &EventUdpToKafkaConfig,
     mut sink: F,
 ) where
     F: FnMut(&[u8]),
@@ -39,7 +44,9 @@ pub fn process_udp_bytes_to_kafka<F>(
         counter!(INCOMING_UDP_HEADERS, "type" => packet_type.as_prometheus_label()).increment(1);
 
         let result = match packet_type {
-            UdpPacketType::NeutronData => process_neutron_frame(fbb, frame, src_ip, &mut sink),
+            UdpPacketType::NeutronData => {
+                process_neutron_frame(fbb, frame, src_ip, config, &mut sink)
+            }
             _ => Err(anyhow!("unimplemented packet type")),
         };
 
@@ -105,8 +112,9 @@ fn packet_to_frames(udp: &[u8]) -> Vec<UdpMessageView<'_>> {
 fn process_neutron_frame<F>(
     fbb: &mut FlatBufferBuilder,
     message: UdpMessageView,
-    _src_ip: &IpAddr,
-    sink: F,
+    src_ip: &IpAddr,
+    config: &EventUdpToKafkaConfig,
+    mut sink: F,
 ) -> anyhow::Result<()>
 where
     F: FnMut(&[u8]),
@@ -123,27 +131,47 @@ where
             })?;
 
     let events = parse_board_data(
-        message.board_type(),
+        message.packet_format_code(),
         message.board_specific_parameters(),
         message.data_bytes(),
     )?;
 
-    if events.is_empty() {
-        // An empty frame is ok; we don't need to emit an ev44 for it.
-        return Ok(());
-    }
+    let is_streaming_control_board = src_ip == &config.streaming_control_board_ip;
 
-    counter!(NEUTRON_EVENTS).increment(events.len() as u64);
-
-    send_ev44(
+    // The period number and PPP only ever come from the streaming control board packets.
+    //
+    // This is to prevent duplicate frames appearing in downstream consumers, such as
+    // `kafka_event_aggregator`, if one of these messages was delayed - either at the
+    // streaming/UDP level, or during transmission via the `_rawEvents` Kafka stream.
+    //
+    // Vetoes are always transmitted, as some vetoes could be generated locally on each
+    // detector board. Downstream consumers, such as `kafka_event_aggregator`, will OR
+    // together vetoes from the streaming control board and from each individual detector
+    // module, when assembling a frame.
+    send_pu00(
         fbb,
         "event_udp_to_kafka",
         0,
         nanoseconds_since_epoch,
-        events.time_of_flight(),
-        events.pixel_id(),
-        sink,
+        Some(message.vetoes()),
+        is_streaming_control_board.then_some(message.period_number().into()),
+        is_streaming_control_board.then_some(message.ppp_per_frame(config)),
+        &mut sink,
     );
+
+    if !events.is_empty() {
+        counter!(NEUTRON_EVENTS).increment(events.len() as u64);
+
+        send_ev44(
+            fbb,
+            "event_udp_to_kafka",
+            0,
+            nanoseconds_since_epoch,
+            events.time_of_flight(),
+            events.pixel_id(),
+            &mut sink,
+        );
+    }
     Ok(())
 }
 
@@ -175,10 +203,41 @@ fn send_ev44<F>(
     sink(bldr.finished_data());
 }
 
+#[allow(clippy::too_many_arguments)]
+fn send_pu00<F>(
+    bldr: &mut FlatBufferBuilder,
+    source_name: &str,
+    message_id: u64,
+    pulse_time: u64,
+    vetos: Option<u32>,
+    period_number: Option<u32>,
+    proton_charge: Option<f32>,
+    mut sink: F,
+) where
+    F: FnMut(&[u8]),
+{
+    bldr.reset();
+
+    let args = Pu00MessageArgs {
+        source_name: Some(bldr.create_string(source_name)),
+        message_id: message_id as i64,
+        reference_time: pulse_time as i64,
+        vetos,
+        period_number,
+        proton_charge,
+    };
+
+    let pu00_offset = Pu00Message::create(bldr, &args);
+    finish_pu_00_message_buffer(bldr, pu00_offset);
+    sink(bldr.finished_data());
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::boards::pc3877ms::Pc3877ms;
+    use crate::config::EventUdpToKafkaConfig;
     use crate::data_processing::process_udp_bytes_to_kafka;
+    use crate::packet_formats::TestablePacketFormat;
+    use crate::packet_formats::packet_format_1::PacketFormat1;
     use crate::testing::{make_udp_header, make_udp_packet};
     use flatbuffers::FlatBufferBuilder;
     use isis_streaming_data_types::{DeserializedMessage, deserialize_message};
@@ -186,26 +245,33 @@ mod tests {
 
     #[test]
     fn test_process_empty_events() {
-        let raw_data = make_udp_header::<Pc3877ms>(0, 123);
+        let raw_data = make_udp_header::<PacketFormat1>(0, 123);
 
         let mut msgs = vec![];
         process_udp_bytes_to_kafka(
             &mut FlatBufferBuilder::new(),
             &raw_data,
             &Ipv4Addr::new(192, 168, 1, 1).into(),
+            &EventUdpToKafkaConfig::make_testing_config(),
             |msg| {
                 msgs.push(msg.to_vec());
             },
         );
 
-        // No ev44s should have been emitted - no events to emit
-        assert_eq!(msgs.len(), 0);
+        // pu00 only, no ev44
+        assert_eq!(msgs.len(), 1);
+
+        match deserialize_message(&msgs[0]) {
+            Ok(DeserializedMessage::PulseMetadataPu00(_)) => {}
+            _ => panic!("Incorrect message type"),
+        }
+
     }
 
     #[test]
-    fn test_full_process_pc3877ms_events() {
+    fn test_full_process_events() {
         let num_events = 2;
-        let raw_data = make_udp_packet::<Pc3877ms>(num_events, 123);
+        let raw_data = make_udp_packet::<PacketFormat1>(num_events, 123);
 
         let n_bytes = raw_data.len();
 
@@ -218,30 +284,43 @@ mod tests {
             &mut FlatBufferBuilder::new(),
             &raw_data,
             &ip.into(),
+            &EventUdpToKafkaConfig::make_testing_config(),
             |msg| {
                 msgs.push(msg.to_vec());
             },
         );
 
-        assert_eq!(msgs.len(), 1);
-        match deserialize_message(&msgs[0]) {
+        assert_eq!(msgs.len(), 2);  // pu00, ev44
+        match deserialize_message(&msgs[1]) {
             Ok(DeserializedMessage::EventDataEv44(msg)) => {
                 assert_eq!(msg.reference_time().get(0), 1776359375123456789);
                 assert_eq!(msg.time_of_flight().unwrap().len(), 2);
 
-                assert_eq!(msg.time_of_flight().unwrap().get(0), 456000);
-                assert_eq!(msg.time_of_flight().unwrap().get(1), 456000);
+                assert_eq!(
+                    msg.time_of_flight().unwrap().get(0),
+                    PacketFormat1::FAKE_EVENT_TOF
+                );
+                assert_eq!(
+                    msg.time_of_flight().unwrap().get(1),
+                    PacketFormat1::FAKE_EVENT_TOF
+                );
 
-                assert_eq!(msg.pixel_id().unwrap().get(0), 123);
-                assert_eq!(msg.pixel_id().unwrap().get(1), 123);
+                assert_eq!(
+                    msg.pixel_id().unwrap().get(0),
+                    PacketFormat1::FAKE_EVENT_PIXEL
+                );
+                assert_eq!(
+                    msg.pixel_id().unwrap().get(1),
+                    PacketFormat1::FAKE_EVENT_PIXEL
+                );
             }
             _ => panic!("Could not deserialize"),
         }
     }
 
     #[test]
-    fn test_full_process_pc3877ms_events_with_trailing_padding_zeros() {
-        let mut raw_data = make_udp_packet::<Pc3877ms>(2, 123);
+    fn test_full_process_events_with_trailing_padding_zeros() {
+        let mut raw_data = make_udp_packet::<PacketFormat1>(2, 123);
 
         // Trailing padding zeros
         raw_data.extend_from_slice(&[0; 1001]);
@@ -253,31 +332,44 @@ mod tests {
             &mut FlatBufferBuilder::new(),
             &raw_data,
             &ip.into(),
+            &EventUdpToKafkaConfig::make_testing_config(),
             |msg| {
                 msgs.push(msg.to_vec());
             },
         );
 
-        assert_eq!(msgs.len(), 1);
-        match deserialize_message(&msgs[0]) {
+        assert_eq!(msgs.len(), 2);  // one pu00, one ev44
+        match deserialize_message(&msgs[1]) {
             Ok(DeserializedMessage::EventDataEv44(msg)) => {
                 assert_eq!(msg.reference_time().get(0), 1776359375123456789);
                 assert_eq!(msg.time_of_flight().unwrap().len(), 2);
 
-                assert_eq!(msg.time_of_flight().unwrap().get(0), 456000);
-                assert_eq!(msg.time_of_flight().unwrap().get(1), 456000);
+                assert_eq!(
+                    msg.time_of_flight().unwrap().get(0),
+                    PacketFormat1::FAKE_EVENT_TOF
+                );
+                assert_eq!(
+                    msg.time_of_flight().unwrap().get(1),
+                    PacketFormat1::FAKE_EVENT_TOF
+                );
 
-                assert_eq!(msg.pixel_id().unwrap().get(0), 123);
-                assert_eq!(msg.pixel_id().unwrap().get(1), 123);
+                assert_eq!(
+                    msg.pixel_id().unwrap().get(0),
+                    PacketFormat1::FAKE_EVENT_PIXEL
+                );
+                assert_eq!(
+                    msg.pixel_id().unwrap().get(1),
+                    PacketFormat1::FAKE_EVENT_PIXEL
+                );
             }
             _ => panic!("Could not deserialize"),
         }
     }
 
     #[test]
-    fn test_full_process_multiple_pc3877ms_events() {
-        let mut raw_data = make_udp_packet::<Pc3877ms>(2, 12);
-        raw_data.extend_from_slice(&make_udp_packet::<Pc3877ms>(2, 34));
+    fn test_full_process_multiple_events() {
+        let mut raw_data = make_udp_packet::<PacketFormat1>(2, 12);
+        raw_data.extend_from_slice(&make_udp_packet::<PacketFormat1>(2, 34));
 
         let ip = Ipv4Addr::new(192, 168, 1, 1);
 
@@ -286,25 +378,39 @@ mod tests {
             &mut FlatBufferBuilder::new(),
             &raw_data,
             &ip.into(),
+            &EventUdpToKafkaConfig::make_testing_config(),
             |msg| {
                 msgs.push(msg.to_vec());
             },
         );
 
-        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs.len(), 4); // pu00, ev44, pu00, ev44
         for msg in msgs {
             match deserialize_message(&msg) {
                 Ok(DeserializedMessage::EventDataEv44(msg)) => {
                     assert_eq!(msg.reference_time().get(0), 1776359375123456789);
                     assert_eq!(msg.time_of_flight().unwrap().len(), 2);
 
-                    assert_eq!(msg.time_of_flight().unwrap().get(0), 456000);
-                    assert_eq!(msg.time_of_flight().unwrap().get(1), 456000);
+                    assert_eq!(
+                        msg.time_of_flight().unwrap().get(0),
+                        PacketFormat1::FAKE_EVENT_TOF
+                    );
+                    assert_eq!(
+                        msg.time_of_flight().unwrap().get(1),
+                        PacketFormat1::FAKE_EVENT_TOF
+                    );
 
-                    assert_eq!(msg.pixel_id().unwrap().get(0), 123);
-                    assert_eq!(msg.pixel_id().unwrap().get(1), 123);
+                    assert_eq!(
+                        msg.pixel_id().unwrap().get(0),
+                        PacketFormat1::FAKE_EVENT_PIXEL
+                    );
+                    assert_eq!(
+                        msg.pixel_id().unwrap().get(1),
+                        PacketFormat1::FAKE_EVENT_PIXEL
+                    );
                 }
-                _ => panic!("Could not deserialize msg 1"),
+                Ok(DeserializedMessage::PulseMetadataPu00(_)) => {}
+                _ => panic!("Could not deserialize msg"),
             }
         }
     }

@@ -4,12 +4,12 @@
 //! messages, and produces these messages to a Kafka topic (usually `_rawEvents`).
 
 pub mod bit_utils;
-pub mod boards;
 pub mod config;
 pub mod data_processing;
 pub mod event_data;
 pub mod gps_time;
 pub mod metrics;
+pub mod packet_formats;
 pub mod testing;
 pub mod udp_message;
 
@@ -27,7 +27,7 @@ use crate::metrics::{
 use ::metrics::{counter, histogram};
 use flatbuffers::FlatBufferBuilder;
 use log::{debug, error};
-use std::net::{UdpSocket};
+use std::net::UdpSocket;
 use std::time::Instant;
 
 /// Command-line arguments for the `event_udp_to_kafka`.
@@ -71,21 +71,27 @@ pub fn udp_process(config: &EventUdpToKafkaConfig) -> ! {
             let now = Instant::now();
             let src_ip = src_sock_addr.ip();
 
-            process_udp_bytes_to_kafka(&mut fbb, &udp_buf[..number_of_bytes], &src_ip, |payload| {
-                let result = producer.send(
-                    rdkafka::producer::BaseRecord::to(&config.dest_kafka_topic)
-                        .key("")
-                        .payload(payload),
-                );
+            process_udp_bytes_to_kafka(
+                &mut fbb,
+                &udp_buf[..number_of_bytes],
+                &src_ip,
+                config,
+                |payload| {
+                    let result = producer.send(
+                        rdkafka::producer::BaseRecord::to(&config.dest_kafka_topic)
+                            .key("")
+                            .payload(payload),
+                    );
 
-                if let Err(e) = result {
-                    error!("Kafka error: {:?}", e);
-                    counter!(OUTGOING_KAFKA_PRODUCE_ERRORS).increment(1);
-                } else {
-                    counter!(OUTGOING_KAFKA_MESSAGES).increment(1);
-                    counter!(OUTGOING_KAFKA_MESSAGE_SIZE).increment(payload.len() as u64);
-                }
-            });
+                    if let Err(e) = result {
+                        error!("Kafka error: {:?}", e);
+                        counter!(OUTGOING_KAFKA_PRODUCE_ERRORS).increment(1);
+                    } else {
+                        counter!(OUTGOING_KAFKA_MESSAGES).increment(1);
+                        counter!(OUTGOING_KAFKA_MESSAGE_SIZE).increment(payload.len() as u64);
+                    }
+                },
+            );
 
             let elapsed = now.elapsed();
             debug!(

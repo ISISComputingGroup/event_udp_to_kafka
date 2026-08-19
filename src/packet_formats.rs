@@ -1,19 +1,16 @@
-use crate::boards::pc3544ms::Pc3544ms;
-use crate::boards::pc3634m1s::Pc3634m1s;
-use crate::boards::pc3877ms::Pc3877ms;
 use crate::event_data::EventData;
+use crate::packet_formats::packet_format_1::PacketFormat1;
 use anyhow::anyhow;
 
-pub mod pc3544ms;
-pub mod pc3634m1s;
-pub mod pc3877ms;
+pub mod packet_format_1;
 
 /// Trait defining a 'board', which contains logic for transforming raw UDP data
 /// into an ``EventData`` struct.
-pub trait Board {
-    /// The board identifier, as transmitted in the UDP header, for this board.
-    /// For example, the identifier for the "pc3544ms" board is '3544'.
-    const BOARD_ID: u16;
+pub trait PacketFormat {
+    /// The packet format identifier, as transmitted in the UDP header.
+    /// Also called "header type", though it also defines how the event-data
+    /// itself should be decoded.
+    const PACKET_FORMAT_CODE: u16;
 
     /// Decoding logic for event data from this board.
     /// Should return an ``Err`` if the data is invalid, for example an invalid length or
@@ -27,13 +24,19 @@ pub trait Board {
     fn parse_raw_data(board_specific_parameters: &[u8], data: &[u8]) -> anyhow::Result<EventData>;
 }
 
-/// Testing utilities for a board. These may be used by unit tests and benchmarks,
+/// Testing utilities for a packet format. These may be used by unit tests and benchmarks,
 /// but are not used at runtime.
-pub trait TestableBoard: Board {
+pub trait TestablePacketFormat: PacketFormat {
+    const FAKE_EVENT_TOF: i32;
+    const FAKE_EVENT_PIXEL: i32;
+
     /// Manufacture a single fake event. The data contained by this fake event is arbitrary,
     /// but should be valid for the type of board.
     /// This data is used for benchmarking and testing, so should aim to be representative
     /// of a typical real event.
+    ///
+    /// The combination of `make_fake_event` and `make_fake_board_specific_header_data` should
+    /// produce an event with tof `FAKE_EVENT_TOF` and pixel `FAKE_EVENT_PIXEL`.
     fn make_fake_event() -> Vec<u8>;
 
     /// Return a board-specific header data suitable for decoding messages from this board.
@@ -44,18 +47,18 @@ pub trait TestableBoard: Board {
 }
 
 pub fn parse_board_data(
-    board_type: u16,
+    packet_format_code: u16,
     board_specific_parameters: &[u8],
     data: &[u8],
 ) -> anyhow::Result<EventData> {
     if data.is_empty() {
         return Ok(EventData::default());
     }
-    match board_type {
-        Pc3544ms::BOARD_ID => Pc3544ms::parse_raw_data(board_specific_parameters, data),
-        Pc3634m1s::BOARD_ID => Pc3634m1s::parse_raw_data(board_specific_parameters, data),
-        Pc3877ms::BOARD_ID => Pc3877ms::parse_raw_data(board_specific_parameters, data),
-        _ => Err(anyhow!("unknown board type {}", board_type)),
+    match packet_format_code {
+        PacketFormat1::PACKET_FORMAT_CODE => {
+            PacketFormat1::parse_raw_data(board_specific_parameters, data)
+        }
+        unknown => Err(anyhow!("unknown packet format code {}", unknown)),
     }
 }
 
@@ -71,7 +74,7 @@ mod tests {
         // If a board type is provided but we don't have a handler for it, should get an error
         assert!(
             parse_board_data(0, &[], &[0; 8])
-                .is_err_and(|e| e.to_string().contains("unknown board type"))
+                .is_err_and(|e| e.to_string().contains("unknown packet format code"))
         );
     }
 }

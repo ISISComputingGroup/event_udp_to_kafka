@@ -97,6 +97,16 @@ impl<'a> UdpMessageView<'a> {
         self.header_word(1)[3] as usize
     }
 
+    /// "Header type", or packet format, streamed from hardware.
+    /// This is used to decide which PacketFormat decoder to use.
+    pub fn packet_format_code(&self) -> u16 {
+        u16::from_be_bytes(
+            self.header_word(1)[1..3]
+                .try_into()
+                .expect("slice of length 2"),
+        )
+    }
+
     /// Length of the header, in bytes
     pub fn header_length_bytes(&self) -> usize {
         self.header_length_words() * 4
@@ -121,8 +131,8 @@ impl<'a> UdpMessageView<'a> {
     }
 
     /// uAh delivered during this ISIS frame.
-    pub fn ppp_per_frame(&self, config: &EventUdpToKafkaConfig) -> f64 {
-        self.raw_ppp_per_frame() as f64 * config.raw_to_uah_scaling()
+    pub fn ppp_per_frame(&self, config: &EventUdpToKafkaConfig) -> f32 {
+        self.raw_ppp_per_frame() as f32 * config.raw_to_uah_scaling()
     }
 
     /// Veto bits, as transmitted over UDP.
@@ -215,13 +225,13 @@ impl UdpPacketType {
 
 #[cfg(test)]
 mod tests {
-    use crate::boards::pc3544ms::Pc3544ms;
     use super::*;
+    use crate::packet_formats::packet_format_1::PacketFormat1;
     use crate::testing::make_udp_header;
 
     #[test]
     fn test_header() {
-        let msg = make_udp_header::<Pc3544ms>(10, 23)
+        let msg = make_udp_header::<PacketFormat1>(10, 23)
             .into_iter()
             .chain([0_u8; 9999])
             .collect::<Vec<_>>();
@@ -230,20 +240,20 @@ mod tests {
         assert_eq!(msg_view.events_in_frame(), 10);
         assert_eq!(
             msg_view.total_length_bytes(),
-            64 + 8 * 10  // 64 byte header + 10x 8-byte events
+            64 + 8 * 10 // 64 byte header + 10x 8-byte events
         );
         assert_eq!(
             msg_view.total_length_words(),
-            16 + 2 * 10  // 16 word header + 10x 2-word events
+            16 + 2 * 10 // 16 word header + 10x 2-word events
         );
-        assert_eq!(msg_view.board_type(), 3544);
+        assert_eq!(msg_view.packet_format_code(), 1);
 
         assert_eq!(msg_view.data_bytes().len(), 8 * 10);
     }
 
     #[test]
     fn test_header_no_events() {
-        let msg = make_udp_header::<Pc3544ms>(0, 23);
+        let msg = make_udp_header::<PacketFormat1>(0, 23);
         let header = UdpMessageView::new(&msg).unwrap();
 
         assert_eq!(header.events_in_frame(), 0);
@@ -255,12 +265,12 @@ mod tests {
 
     #[test]
     fn test_header_ppp() {
-        let msg = make_udp_header::<Pc3544ms>(0, 23);
+        let msg = make_udp_header::<PacketFormat1>(0, 23);
         let header = UdpMessageView::new(&msg).unwrap();
 
         assert_eq!(header.raw_ppp_per_frame(), 23);
 
-        let mut config = EventUdpToKafkaConfig::make_default_config();
+        let mut config = EventUdpToKafkaConfig::make_testing_config();
         config.raw_to_uah_scaling = Some(123.456);
 
         assert!((header.ppp_per_frame(&config) - 23. * 123.456).abs() < 0.01);
@@ -268,7 +278,7 @@ mod tests {
 
     #[test]
     fn test_message_type() {
-        let msg = make_udp_header::<Pc3544ms>(0, 23);
+        let msg = make_udp_header::<PacketFormat1>(0, 23);
         let header = UdpMessageView::new(&msg).unwrap();
 
         assert_eq!(header.packet_type(), UdpPacketType::NeutronData);

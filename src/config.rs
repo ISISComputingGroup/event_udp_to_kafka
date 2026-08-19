@@ -1,7 +1,6 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::net::IpAddr;
-#[cfg(test)]
 use std::net::Ipv4Addr;
 
 #[derive(Debug, Deserialize)]
@@ -16,7 +15,7 @@ pub struct EventUdpToKafkaConfig {
 
     /// Scaling factor to convert the 8-bit 'raw' PPP signal
     /// into uAh per frame
-    pub raw_to_uah_scaling: Option<f64>,
+    pub raw_to_uah_scaling: Option<f32>,
 
     /// Kafka topic to send the data to
     pub dest_kafka_topic: String,
@@ -34,16 +33,17 @@ pub struct EventUdpToKafkaConfig {
 }
 
 impl EventUdpToKafkaConfig {
+    pub const DEFAULT_RAW_TO_UAH_SCALING: f32 = 1.738e-6;
+
     pub fn udp_buffer_size(&self) -> usize {
         self.udp_buffer_size.unwrap_or(9000)
     }
 
-    pub fn raw_to_uah_scaling(&self) -> f64 {
+    pub fn raw_to_uah_scaling(&self) -> f32 {
         self.raw_to_uah_scaling.unwrap_or(1.738e-6)
     }
 
-    #[cfg(test)]
-    pub fn make_default_config() -> EventUdpToKafkaConfig {
+    pub fn make_testing_config() -> EventUdpToKafkaConfig {
         EventUdpToKafkaConfig {
             udp_bind_addr: "127.0.0.1:1234".to_string(),
             udp_buffer_size: None,
