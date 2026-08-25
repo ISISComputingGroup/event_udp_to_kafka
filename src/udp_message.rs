@@ -59,7 +59,7 @@ impl<'a> UdpMessageView<'a> {
         }
         // Word 1, bits 24..=31 (the most-significant, big-endian byte) is always the
         // header marker byte `0xFF`.
-        if content.get(4) != Some(&0xFF) {
+        if content.get(WORD_SIZE) != Some(&0xFF) {
             return Err(InvalidMessageReason::MissingHeaderMarker);
         }
 
