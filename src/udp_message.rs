@@ -6,8 +6,11 @@
 use crate::config::EventUdpToKafkaConfig;
 use crate::gps_time::GpsTime;
 
+/// Number of bytes per word on the streaming control board
+pub const WORD_SIZE: usize = 4;
+
 /// Marker word for "start of header".
-pub const HEADER_MARKER: &[u8; 4] = &[0xFF, 0xFF, 0xFF, 0xFF];
+pub const HEADER_MARKER: &[u8; WORD_SIZE] = &[0xFF, 0xFF, 0xFF, 0xFF];
 
 /// Minimum length of header in words.
 /// This is the length of the fixed part of the header (13 words), plus a 1-word DDR checksum
@@ -15,7 +18,7 @@ pub const MINIMUM_HEADER_LEN_WORDS: usize = 14;
 
 /// Minimum Length of header in bytes (14 4-byte words).
 /// This is the length of the fixed part of the header, plus a 1-word DDR checksum
-pub const MINIMUM_HEADER_LEN_BYTES: usize = MINIMUM_HEADER_LEN_WORDS * 4;
+pub const MINIMUM_HEADER_LEN_BYTES: usize = MINIMUM_HEADER_LEN_WORDS * WORD_SIZE;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum InvalidMessageReason {
@@ -75,11 +78,11 @@ impl<'a> UdpMessageView<'a> {
     }
 
     /// Extract a single word from the header
-    fn header_word(&self, n: usize) -> [u8; 4] {
+    fn header_word(&self, n: usize) -> [u8; WORD_SIZE] {
         assert!(n <= 15, "Invalid word requested from header");
-        self.content[4 * n..4 * n + 4]
+        self.content[WORD_SIZE * n..WORD_SIZE * (n + 1)]
             .try_into()
-            .expect("slice of length 4")
+            .expect("slice of length WORD_SIZE")
     }
 
     /// The total length, in 32-bit words, of the header and data for this message.
@@ -109,7 +112,7 @@ impl<'a> UdpMessageView<'a> {
 
     /// Length of the header, in bytes
     pub fn header_length_bytes(&self) -> usize {
-        self.header_length_words() * 4
+        self.header_length_words() * WORD_SIZE
     }
 
     /// Frame number.
@@ -195,8 +198,11 @@ impl<'a> UdpMessageView<'a> {
     }
 
     pub fn board_specific_parameters(&self) -> &[u8] {
-        // TODO: comment explaining this logic
-        &self.content[13 * 4..(self.header_length_bytes() - 4)]
+        // The header-specific parameters are located at word 13 onwards of the header,
+        // but the last word of the header is always a checksum word.
+        // So the board-specific parameters are those from word 13, up to the length of
+        // the header minus 1 word.
+        &self.content[13 * WORD_SIZE..(self.header_length_bytes() - WORD_SIZE)]
     }
 
     /// Get the non-header bytes from this message.

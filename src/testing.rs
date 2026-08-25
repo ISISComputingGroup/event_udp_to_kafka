@@ -16,7 +16,11 @@ pub const TESTING_TIMESTAMP: u64 = (26 << (32 + 24))  // 2026
 
 pub const TESTING_TIMESTAMP_NS_SINCE_EPOCH: u64 = 1776359375123456789;
 
-/// Fabricate a valid neutron header.
+/// Fabricate a valid neutron header, following the packet format described at
+/// https://isiscomputinggroup.github.io/ibex_developers_manual/specific_iocs/datastreaming/Datastreaming_udp_packet_formats.html
+///
+/// Note that all data is big-endian; this means that the most-significant bytes need to
+/// be added first in the message.
 pub fn make_udp_header<T>(num_events: usize, ppp: u8) -> Vec<u8>
 where
     T: TestablePacketFormat,

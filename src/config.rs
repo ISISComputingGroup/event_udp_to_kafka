@@ -35,12 +35,17 @@ pub struct EventUdpToKafkaConfig {
 impl EventUdpToKafkaConfig {
     pub const DEFAULT_RAW_TO_UAH_SCALING: f32 = 1.738e-6;
 
+    // This corresponds to the size of a "standard" UDP jumbo frame.
+    pub const DEFAULT_UDP_BUFFER_SIZE: usize = 9000;
+
     pub fn udp_buffer_size(&self) -> usize {
-        self.udp_buffer_size.unwrap_or(9000)
+        self.udp_buffer_size
+            .unwrap_or(EventUdpToKafkaConfig::DEFAULT_UDP_BUFFER_SIZE)
     }
 
     pub fn raw_to_uah_scaling(&self) -> f32 {
-        self.raw_to_uah_scaling.unwrap_or(1.738e-6)
+        self.raw_to_uah_scaling
+            .unwrap_or(EventUdpToKafkaConfig::DEFAULT_RAW_TO_UAH_SCALING)
     }
 
     pub fn make_testing_config() -> EventUdpToKafkaConfig {

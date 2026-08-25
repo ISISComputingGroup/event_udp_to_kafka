@@ -9,6 +9,8 @@ pub const fn mask(num_bits: u32) -> u32 {
 /// bits of `data`.
 ///
 /// For example, extracting 8 bits from 0x12345678 will return 0x12
+///
+/// Attempting to extract more than 32 bits from a u32 will return None
 pub fn extract_msb(data: u32, num_bits: u32) -> Option<u32> {
     data.checked_shr(u32::BITS.checked_sub(num_bits)?)
 }
