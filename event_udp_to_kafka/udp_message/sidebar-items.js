@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["END_OF_RUN_HEADER","HEADER_LEN_BYTES","HEADER_LEN_WORDS","HEADER_MARKER","NEUTRON_HEADER","SE_FRAME_HEADER","VETO_FRAME_HEADER"],"enum":["InvalidMessageReason","UdpPacketType"],"struct":["UdpMessageView","UdpPacketTypeIter"]};
