@@ -1,0 +1,2 @@
+createSrcSidebar('[["event_udp_to_kafka",["",[["packet_formats",[],["packet_format_1.rs"]]],["bit_utils.rs","config.rs","data_processing.rs","event_data.rs","gps_time.rs","lib.rs","metrics.rs","packet_formats.rs","testing.rs","udp_message.rs"]]]]');
+//{"start":19,"fragment_lengths":[226]}
