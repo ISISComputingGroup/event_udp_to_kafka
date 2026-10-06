@@ -7,5 +7,4 @@ RUN cargo install --path .
 FROM debian:stable-slim
 RUN apt-get update && apt-get install -y libcurl4-openssl-dev && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /usr/local/cargo/bin/event-udp-to-kafka /usr/local/bin/event-udp-to-kafka
-COPY ./src/config/* .
 CMD ["event-udp-to-kafka"]

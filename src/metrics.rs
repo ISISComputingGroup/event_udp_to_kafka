@@ -21,7 +21,9 @@ pub const INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_LONG: &str =
 pub const PROCESSING_ERRORS: &str = "udp2kafka_processing_errors";
 pub const PROCESSING_TIME: &str = "udp2kafka_processing_time";
 
+pub const STREAMING_CONTROL_BOARD_FRAMES: &str = "udp2kafka_streaming_control_board_frames";
 pub const NEUTRON_EVENTS: &str = "udp2kafka_neutron_events";
+pub const INVALID_NEUTRON_EVENTS: &str = "udp2kafka_invalid_neutron_events";
 
 pub const OUTGOING_KAFKA_PRODUCE_ERRORS: &str = "udp2kafka_outgoing_kafka_production_errors";
 pub const OUTGOING_KAFKA_MESSAGES: &str = "udp2kafka_outgoing_kafka_messages";
@@ -80,6 +82,13 @@ pub fn initialize_metrics(config: &EventUdpToKafkaConfig) -> Result<(), String> 
     );
     counter!(INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_LONG).absolute(0);
 
+    describe_counter!(
+        STREAMING_CONTROL_BOARD_FRAMES,
+        Unit::Count,
+        "Number of frame headers received from streaming control board."
+    );
+    counter!(STREAMING_CONTROL_BOARD_FRAMES).absolute(0);
+
     describe_counter!(PROCESSING_ERRORS, Unit::Count, "Message processing errors.");
 
     for typ in UdpPacketType::iter() {
@@ -94,6 +103,13 @@ pub fn initialize_metrics(config: &EventUdpToKafkaConfig) -> Result<(), String> 
 
     describe_counter!(NEUTRON_EVENTS, Unit::Count, "Number of neutron events");
     counter!(NEUTRON_EVENTS).absolute(0);
+
+    describe_counter!(
+        INVALID_NEUTRON_EVENTS,
+        Unit::Count,
+        "Number of invalid (dropped) neutron events which were part of a valid packet"
+    );
+    counter!(INVALID_NEUTRON_EVENTS).absolute(0);
 
     describe_counter!(
         OUTGOING_KAFKA_PRODUCE_ERRORS,

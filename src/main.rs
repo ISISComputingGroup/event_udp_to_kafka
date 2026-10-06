@@ -1,7 +1,7 @@
 use clap::Parser;
 use event_udp_to_kafka::config::EventUdpToKafkaConfig;
 use event_udp_to_kafka::metrics::initialize_metrics;
-use event_udp_to_kafka::{Args, WiringConfigRecord, read_csv, udp_process};
+use event_udp_to_kafka::{Args, udp_process};
 use log::info;
 
 fn main() {
@@ -16,7 +16,5 @@ fn main() {
 
     initialize_metrics(&config).expect("Can't initialize metrics");
 
-    let csv_data: Vec<WiringConfigRecord> = read_csv(&config.wiring_csv_path);
-
-    udp_process(&config, csv_data)
+    udp_process(&config)
 }

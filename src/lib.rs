@@ -3,10 +3,13 @@
 //! This module listens to UDP data received on a socket, converts this to flatbuffers-encoded
 //! messages, and produces these messages to a Kafka topic (usually `_rawEvents`).
 
+pub mod bit_utils;
 pub mod config;
 pub mod data_processing;
+pub mod event_data;
 pub mod gps_time;
 pub mod metrics;
+pub mod packet_formats;
 pub mod testing;
 pub mod udp_message;
 
@@ -24,9 +27,7 @@ use crate::metrics::{
 use ::metrics::{counter, histogram};
 use flatbuffers::FlatBufferBuilder;
 use log::{debug, error};
-use std::fs::File;
 use std::net::UdpSocket;
-use std::path::Path;
 use std::time::Instant;
 
 /// Command-line arguments for the `event_udp_to_kafka`.
@@ -39,41 +40,6 @@ pub struct Args {
 
     #[command(flatten)]
     pub verbosity: clap_verbosity_flag::Verbosity,
-}
-
-/// Wiring table information.
-#[derive(Debug, serde::Deserialize)]
-#[allow(unused)]
-pub struct WiringConfigRecord {
-    #[serde(rename = "BRD_NUM")]
-    pub brd_num: u8,
-    #[serde(rename = "BRD_Ref")]
-    pub brd_ref: String,
-    #[serde(rename = "BRD_Type")]
-    pub brd_type: String,
-    #[serde(rename = "Packet_Type")]
-    pub packet_type: String,
-    #[serde(rename = "SW_Pos")]
-    pub sw_pos: u8,
-    #[serde(rename = "StreamingIP")]
-    pub streaming_ip: String,
-    #[serde(rename = "CH")]
-    pub ch: u8,
-    #[serde(rename = "Mantid_DetectorID_Start")]
-    pub mantid_detector_id_start: u32,
-    #[serde(rename = "Mantid_Detector_ID_Lenght")]
-    pub mantid_detector_id_length: u32,
-    #[serde(rename = "Comment")]
-    pub comment: String,
-}
-
-pub fn read_csv<P: AsRef<Path>>(filename: P) -> Vec<WiringConfigRecord> {
-    let file = File::open(filename).unwrap();
-    let mut rdr = csv::Reader::from_reader(file);
-
-    rdr.deserialize()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap_or_else(|err| panic!("Cannot deserialize wiring table line: {err}"))
 }
 
 fn make_producer(config: &EventUdpToKafkaConfig) -> ThreadedProducer<DefaultProducerContext> {
@@ -89,7 +55,7 @@ fn make_producer(config: &EventUdpToKafkaConfig) -> ThreadedProducer<DefaultProd
 }
 
 /// Listen to a UDP socket and produce messages onto the output Kafka topic forever.
-pub fn udp_process(config: &EventUdpToKafkaConfig, wiring_config: Vec<WiringConfigRecord>) -> ! {
+pub fn udp_process(config: &EventUdpToKafkaConfig) -> ! {
     let producer = make_producer(config);
 
     let mut fbb = FlatBufferBuilder::new();
@@ -103,13 +69,13 @@ pub fn udp_process(config: &EventUdpToKafkaConfig, wiring_config: Vec<WiringConf
 
         if let Ok((number_of_bytes, src_sock_addr)) = read_result {
             let now = Instant::now();
-            let src_ip = src_sock_addr.ip().to_string();
+            let src_ip = src_sock_addr.ip();
 
             process_udp_bytes_to_kafka(
                 &mut fbb,
                 &udp_buf[..number_of_bytes],
                 &src_ip,
-                &wiring_config,
+                config,
                 |payload| {
                     let result = producer.send(
                         rdkafka::producer::BaseRecord::to(&config.dest_kafka_topic)
