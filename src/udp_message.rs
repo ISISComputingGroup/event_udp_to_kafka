@@ -143,19 +143,6 @@ impl<'a> UdpMessageView<'a> {
         u32::from_be_bytes(self.header_word(9))
     }
 
-    /// Header flags (word 2, bits 0..=7), as transmitted over UDP.
-    ///
-    /// These flags are active-low: a bit that is low indicates the corresponding
-    /// condition. When all bits are high, this is a neutron data packet.
-    ///
-    /// - Bit 0: End of run header marker
-    /// - Bit 1: Veto frame packet header marker
-    /// - Bit 2: Pause frame packet header marker
-    /// - Bit 3: No frame sync (not implemented)
-    fn header_flags(&self) -> u8 {
-        self.header_word(2)[3]
-    }
-
     /// The board type, as transmitted over UDP.
     /// For example, for a PC3544MS board, this will be 3544.
     pub fn board_type(&self) -> u16 {
@@ -184,19 +171,6 @@ impl<'a> UdpMessageView<'a> {
         ))
     }
 
-    /// Packet type.
-    ///
-    /// Determined from the header flags in word 2 (bits 0..=7), which are active-low.
-    /// When all flag bits are high, this is a neutron data packet.
-    pub fn packet_type(&self) -> UdpPacketType {
-        match self.header_flags() {
-            0b11111111 => UdpPacketType::NeutronData,
-            0b11111110 => UdpPacketType::EndOfRun,
-            0b11111101 => UdpPacketType::VetoFrame,
-            _ => UdpPacketType::Invalid,
-        }
-    }
-
     pub fn board_specific_parameters(&self) -> &[u8] {
         // The header-specific parameters are located at word 13 onwards of the header,
         // but the last word of the header is always a checksum word.
@@ -210,22 +184,6 @@ impl<'a> UdpMessageView<'a> {
     /// For neutron frames, these bytes contain the neutron event data.
     pub fn data_bytes(&self) -> &[u8] {
         &self.content[self.header_length_bytes()..self.total_length_bytes()]
-    }
-}
-
-/// Types of packets we may receive over UDP.
-#[derive(Debug, Eq, PartialEq, strum::EnumIter, strum::IntoStaticStr)]
-pub enum UdpPacketType {
-    VetoFrame,
-    SampleEnvironment,
-    NeutronData,
-    EndOfRun,
-    Invalid,
-}
-
-impl UdpPacketType {
-    pub fn as_prometheus_label(&self) -> &'static str {
-        self.into()
     }
 }
 
@@ -280,14 +238,6 @@ mod tests {
         config.raw_to_uah_scaling = Some(123.456);
 
         assert!((header.ppp_per_frame(&config) - 23. * 123.456).abs() < 0.01);
-    }
-
-    #[test]
-    fn test_message_type() {
-        let msg = make_udp_header::<PacketFormat1>(0, 23);
-        let header = UdpMessageView::new(&msg).unwrap();
-
-        assert_eq!(header.packet_type(), UdpPacketType::NeutronData);
     }
 
     #[test]

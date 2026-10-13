@@ -1,6 +1,6 @@
 //! Utilities for converting UDP bytes to flatbuffers-encoded messages.
 
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use std::net::IpAddr;
 
 use crate::config::EventUdpToKafkaConfig;
@@ -10,7 +10,7 @@ use crate::metrics::{
     INCOMING_UDP_PACKETS, NEUTRON_EVENTS, PROCESSING_ERRORS, STREAMING_CONTROL_BOARD_FRAMES,
 };
 use crate::packet_formats::parse_board_data;
-use crate::udp_message::{InvalidMessageReason, UdpMessageView, UdpPacketType};
+use crate::udp_message::{InvalidMessageReason, UdpMessageView};
 use flatbuffers::FlatBufferBuilder;
 use isis_streaming_data_types::flatbuffers_generated::events_ev44::{
     Event44Message, Event44MessageArgs, finish_event_44_message_buffer,
@@ -39,24 +39,13 @@ pub fn process_udp_bytes_to_kafka<F>(
     let frames = packet_to_frames(udp_packet);
 
     for frame in frames {
-        let packet_type = frame.packet_type();
+        counter!(INCOMING_UDP_HEADERS).increment(1);
 
-        counter!(INCOMING_UDP_HEADERS, "type" => packet_type.as_prometheus_label()).increment(1);
-
-        let result = match packet_type {
-            UdpPacketType::NeutronData => {
-                process_neutron_frame(fbb, frame, src_ip, config, &mut sink)
-            }
-            _ => Err(anyhow!("unimplemented packet type")),
-        };
+        let result = process_neutron_frame(fbb, frame, src_ip, config, &mut sink);
 
         if let Err(e) = result {
-            warn!(
-                "Error processing {} packet: {}",
-                packet_type.as_prometheus_label(),
-                e
-            );
-            counter!(PROCESSING_ERRORS, "type" => packet_type.as_prometheus_label()).increment(1);
+            warn!("Error processing packet: {}", e);
+            counter!(PROCESSING_ERRORS).increment(1);
         }
     }
 }

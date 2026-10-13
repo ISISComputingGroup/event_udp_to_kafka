@@ -1,11 +1,9 @@
 //! Utilities for exposing Prometheus-compatible metrics
 
 use crate::config::EventUdpToKafkaConfig;
-use crate::udp_message::UdpPacketType;
 use metrics::{Unit, counter, describe_counter, describe_histogram};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use std::net::SocketAddr;
-use strum::IntoEnumIterator;
 
 pub const INCOMING_UDP_PACKETS: &str = "udp2kafka_incoming_udp_packets";
 pub const INCOMING_UDP_PACKET_SIZE: &str = "udp2kafka_incoming_udp_packet_size";
@@ -57,10 +55,6 @@ pub fn initialize_metrics(config: &EventUdpToKafkaConfig) -> Result<(), String> 
 
     describe_counter!(INCOMING_UDP_HEADERS, Unit::Count, "Incoming UDP headers.");
 
-    for typ in UdpPacketType::iter() {
-        counter!(INCOMING_UDP_HEADERS, "type" => typ.as_prometheus_label()).absolute(0);
-    }
-
     describe_counter!(
         INCOMING_UDP_PACKET_ERRORS,
         Unit::Count,
@@ -90,10 +84,6 @@ pub fn initialize_metrics(config: &EventUdpToKafkaConfig) -> Result<(), String> 
     counter!(STREAMING_CONTROL_BOARD_FRAMES).absolute(0);
 
     describe_counter!(PROCESSING_ERRORS, Unit::Count, "Message processing errors.");
-
-    for typ in UdpPacketType::iter() {
-        counter!(PROCESSING_ERRORS, "type" => typ.as_prometheus_label()).absolute(0);
-    }
 
     describe_histogram!(
         PROCESSING_TIME,

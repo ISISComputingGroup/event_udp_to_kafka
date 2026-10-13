@@ -5,10 +5,14 @@ use event_udp_to_kafka::{Args, udp_process};
 use log::info;
 
 fn main() {
-    env_logger::init();
+    let args = Args::parse();
+
+    env_logger::Builder::new()
+        .filter_level(args.verbosity.into())
+        .format_timestamp_micros()
+        .init();
 
     info!("Starting event UDP to Kafka");
-    let args = Args::parse();
 
     let config: EventUdpToKafkaConfig =
         toml::from_str(&std::fs::read_to_string(args.config).expect("Can't read config file"))

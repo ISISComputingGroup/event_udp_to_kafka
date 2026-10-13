@@ -26,7 +26,7 @@ use crate::metrics::{
 };
 use ::metrics::{counter, histogram};
 use flatbuffers::FlatBufferBuilder;
-use log::{debug, error};
+use log::{debug, error, trace};
 use std::net::UdpSocket;
 use std::time::Instant;
 
@@ -70,6 +70,8 @@ pub fn udp_process(config: &EventUdpToKafkaConfig) -> ! {
         if let Ok((number_of_bytes, src_sock_addr)) = read_result {
             let now = Instant::now();
             let src_ip = src_sock_addr.ip();
+
+            trace!("raw data: {:?}", &udp_buf[..number_of_bytes]);
 
             process_udp_bytes_to_kafka(
                 &mut fbb,
