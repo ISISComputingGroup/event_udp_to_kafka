@@ -17,10 +17,10 @@ impl ClientContext for MetricsProducerContext {
         gauge!(KAFKA_MSG_MAX).set(statistics.msg_max as f64);
         gauge!(KAFKA_MSG_SIZE).set(statistics.msg_size as f64);
         gauge!(KAFKA_MSG_SIZE_MAX).set(statistics.msg_size_max as f64);
-        gauge!(KAFKA_TX).set(statistics.tx as f64);
-        gauge!(KAFKA_TX_BYTES).set(statistics.tx_bytes as f64);
-        gauge!(KAFKA_RX).set(statistics.rx as f64);
-        gauge!(KAFKA_RX_BYTES).set(statistics.rx_bytes as f64);
+        counter!(KAFKA_TX).absolute(statistics.tx as u64);
+        counter!(KAFKA_TX_BYTES).absolute(statistics.tx_bytes as u64);
+        counter!(KAFKA_RX).absolute(statistics.rx as u64);
+        counter!(KAFKA_RX_BYTES).absolute(statistics.rx_bytes as u64);
     }
 }
 

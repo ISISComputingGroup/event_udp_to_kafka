@@ -183,33 +183,33 @@ pub fn initialize_metrics(config: &EventUdpToKafkaConfig) -> Result<(), String> 
     );
     gauge!(KAFKA_MSG_SIZE_MAX).set(0);
 
-    describe_gauge!(
+    describe_counter!(
         KAFKA_TX,
         Unit::Count,
         "Total number of requests sent to Kafka brokers"
     );
-    gauge!(KAFKA_TX).set(0);
+    counter!(KAFKA_TX).absolute(0);
 
-    describe_gauge!(
+    describe_counter!(
         KAFKA_TX_BYTES,
         Unit::Bytes,
         "Total number of bytes transmitted to Kafka brokers"
     );
-    gauge!(KAFKA_TX_BYTES).set(0);
+    counter!(KAFKA_TX_BYTES).absolute(0);
 
-    describe_gauge!(
+    describe_counter!(
         KAFKA_RX,
         Unit::Count,
         "Total number of responses received from Kafka brokers"
     );
-    gauge!(KAFKA_RX).set(0);
+    counter!(KAFKA_RX).absolute(0);
 
-    describe_gauge!(
+    describe_counter!(
         KAFKA_RX_BYTES,
         Unit::Bytes,
         "Total number of bytes received from Kafka brokers"
     );
-    gauge!(KAFKA_RX_BYTES).set(0);
+    counter!(KAFKA_RX_BYTES).absolute(0);
 
     describe_counter!(
         KAFKA_FAILED_DELIVERIES,
