@@ -97,8 +97,9 @@ pub fn udp_process(config: &EventUdpToKafkaConfig) -> ! {
 
             let elapsed = now.elapsed();
             debug!(
-                "Packet IP: {} - Processing time: {:.3}us",
+                "Packet IP: {} - {} bytes - Processing time: {:.3}us",
                 src_ip,
+                number_of_bytes,
                 elapsed.as_micros()
             );
             histogram!(PROCESSING_TIME).record(elapsed.as_secs_f64());

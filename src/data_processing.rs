@@ -7,8 +7,8 @@ use crate::config::EventUdpToKafkaConfig;
 use crate::metrics::{
     INCOMING_UDP_HEADERS, INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_LONG,
     INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_SHORT, INCOMING_UDP_PACKET_SIZE,
-    INCOMING_UDP_PACKETS, INCOMING_UDP_PACKETS_BY_IP, NEUTRON_EVENTS, PROCESSING_ERRORS,
-    PROCESSING_ERRORS_BY_IP, STREAMING_CONTROL_BOARD_FRAMES,
+    INCOMING_UDP_PACKET_SIZE_BY_IP, INCOMING_UDP_PACKETS, INCOMING_UDP_PACKETS_BY_IP,
+    NEUTRON_EVENTS, PROCESSING_ERRORS, PROCESSING_ERRORS_BY_IP, STREAMING_CONTROL_BOARD_FRAMES,
 };
 use crate::packet_formats::parse_board_data;
 use crate::udp_message::{InvalidMessageReason, UdpMessageView};
@@ -37,6 +37,8 @@ pub fn process_udp_bytes_to_kafka<F>(
     counter!(INCOMING_UDP_PACKETS).increment(1);
     counter!(INCOMING_UDP_PACKET_SIZE).increment(udp_packet.len() as u64);
     counter!(INCOMING_UDP_PACKETS_BY_IP, "ip" => src_ip.to_string()).increment(1);
+    counter!(INCOMING_UDP_PACKET_SIZE_BY_IP, "ip" => src_ip.to_string())
+        .increment(udp_packet.len() as u64);
 
     let frames = packet_to_frames(udp_packet);
 
