@@ -6,6 +6,7 @@ use metrics_exporter_prometheus::PrometheusBuilder;
 use std::net::SocketAddr;
 
 pub const INCOMING_UDP_PACKETS: &str = "udp2kafka_incoming_udp_packets";
+pub const INCOMING_UDP_PACKETS_BY_IP: &str = "udp2kafka_incoming_udp_packets_by_ip";
 pub const INCOMING_UDP_PACKET_SIZE: &str = "udp2kafka_incoming_udp_packet_size";
 
 pub const INCOMING_UDP_HEADERS: &str = "udp2kafka_incoming_udp_headers";
@@ -45,6 +46,12 @@ pub fn initialize_metrics(config: &EventUdpToKafkaConfig) -> Result<(), String> 
         "Total UDP packets received"
     );
     counter!(INCOMING_UDP_PACKETS).absolute(0);
+
+    describe_counter!(
+        INCOMING_UDP_PACKETS_BY_IP,
+        Unit::Count,
+        "Total UDP packets received from a specific IP address"
+    );
 
     describe_counter!(
         INCOMING_UDP_PACKET_SIZE,
