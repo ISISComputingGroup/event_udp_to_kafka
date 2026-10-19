@@ -18,6 +18,7 @@ pub const INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_LONG: &str =
     "udp2kafka_incoming_udp_invalid_header_length_too_long";
 
 pub const PROCESSING_ERRORS: &str = "udp2kafka_processing_errors";
+pub const PROCESSING_ERRORS_BY_IP: &str = "udp2kafka_processing_errors_by_ip";
 pub const PROCESSING_TIME: &str = "udp2kafka_processing_time";
 
 pub const STREAMING_CONTROL_BOARD_FRAMES: &str = "udp2kafka_streaming_control_board_frames";
@@ -91,6 +92,13 @@ pub fn initialize_metrics(config: &EventUdpToKafkaConfig) -> Result<(), String> 
     counter!(STREAMING_CONTROL_BOARD_FRAMES).absolute(0);
 
     describe_counter!(PROCESSING_ERRORS, Unit::Count, "Message processing errors.");
+    counter!(PROCESSING_ERRORS).absolute(0);
+
+    describe_counter!(
+        PROCESSING_ERRORS_BY_IP,
+        Unit::Count,
+        "Message processing errors from a specific IP address."
+    );
 
     describe_histogram!(
         PROCESSING_TIME,
