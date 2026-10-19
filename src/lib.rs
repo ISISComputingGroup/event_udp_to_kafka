@@ -8,6 +8,7 @@ pub mod config;
 pub mod data_processing;
 pub mod event_data;
 pub mod gps_time;
+pub mod kafka_producer_metrics;
 pub mod metrics;
 pub mod packet_formats;
 pub mod testing;
@@ -17,9 +18,10 @@ use crate::data_processing::process_udp_bytes_to_kafka;
 
 use clap::Parser;
 use rdkafka::config::ClientConfig;
-use rdkafka::producer::{DefaultProducerContext, ThreadedProducer};
+use rdkafka::producer::ThreadedProducer;
 
 use crate::config::EventUdpToKafkaConfig;
+use crate::kafka_producer_metrics::MetricsProducerContext;
 use crate::metrics::{
     INCOMING_UDP_PACKET_ERRORS, OUTGOING_KAFKA_MESSAGE_SIZE, OUTGOING_KAFKA_MESSAGES,
     OUTGOING_KAFKA_PRODUCE_ERRORS, PROCESSING_TIME,
@@ -42,7 +44,7 @@ pub struct Args {
     pub verbosity: clap_verbosity_flag::Verbosity,
 }
 
-fn make_producer(config: &EventUdpToKafkaConfig) -> ThreadedProducer<DefaultProducerContext> {
+fn make_producer(config: &EventUdpToKafkaConfig) -> ThreadedProducer<MetricsProducerContext> {
     let mut kafka_producer_config = ClientConfig::new();
 
     config.kafka_producer.iter().for_each(|(k, v)| {
@@ -50,7 +52,7 @@ fn make_producer(config: &EventUdpToKafkaConfig) -> ThreadedProducer<DefaultProd
     });
 
     kafka_producer_config
-        .create()
+        .create_with_context(MetricsProducerContext {})
         .expect("Producer creation error")
 }
 

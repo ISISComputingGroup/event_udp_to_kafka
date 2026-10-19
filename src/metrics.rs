@@ -1,7 +1,7 @@
 //! Utilities for exposing Prometheus-compatible metrics
 
 use crate::config::EventUdpToKafkaConfig;
-use metrics::{Unit, counter, describe_counter, describe_histogram};
+use metrics::{Unit, counter, describe_counter, describe_gauge, describe_histogram, gauge};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use std::net::SocketAddr;
 
@@ -29,6 +29,17 @@ pub const INVALID_NEUTRON_EVENTS: &str = "udp2kafka_invalid_neutron_events";
 pub const OUTGOING_KAFKA_PRODUCE_ERRORS: &str = "udp2kafka_outgoing_kafka_production_errors";
 pub const OUTGOING_KAFKA_MESSAGES: &str = "udp2kafka_outgoing_kafka_messages";
 pub const OUTGOING_KAFKA_MESSAGE_SIZE: &str = "udp2kafka_outgoing_kafka_message_size";
+
+pub const KAFKA_REPLYQ: &str = "udp2kafka_kafka_replyq";
+pub const KAFKA_MSG_CNT: &str = "udp2kafka_kafka_msg_cnt";
+pub const KAFKA_MSG_MAX: &str = "udp2kafka_kafka_msg_max";
+pub const KAFKA_MSG_SIZE: &str = "udp2kafka_kafka_msg_size";
+pub const KAFKA_MSG_SIZE_MAX: &str = "udp2kafka_kafka_msg_size_max";
+pub const KAFKA_TX: &str = "udp2kafka_kafka_tx";
+pub const KAFKA_TX_BYTES: &str = "udp2kafka_kafka_tx_bytes";
+pub const KAFKA_RX: &str = "udp2kafka_kafka_rx";
+pub const KAFKA_RX_BYTES: &str = "udp2kafka_kafka_rx_bytes";
+pub const KAFKA_FAILED_DELIVERIES: &str = "udp2kafka_kafka_failed_deliveries";
 
 pub fn initialize_metrics(config: &EventUdpToKafkaConfig) -> Result<(), String> {
     let builder = PrometheusBuilder::new()
@@ -143,6 +154,69 @@ pub fn initialize_metrics(config: &EventUdpToKafkaConfig) -> Result<(), String> 
         "Size of messages successfully enqueued for sending to Kafka"
     );
     counter!(OUTGOING_KAFKA_MESSAGE_SIZE).absolute(0);
+
+    describe_gauge!(
+        KAFKA_REPLYQ,
+        Unit::Count,
+        "Number of ops (callbacks, events, etc) waiting in queue for application to serve with rd_kafka_poll()"
+    );
+    gauge!(KAFKA_REPLYQ).set(0);
+
+    describe_gauge!(
+        KAFKA_MSG_CNT,
+        Unit::Count,
+        "Current number of messages in producer queues"
+    );
+    gauge!(KAFKA_MSG_CNT).set(0);
+
+    describe_gauge!(
+        KAFKA_MSG_MAX,
+        Unit::Count,
+        "Threshold: maximum number of messages allowed allowed on the producer queues"
+    );
+    gauge!(KAFKA_MSG_MAX).set(0);
+
+    describe_gauge!(
+        KAFKA_MSG_SIZE_MAX,
+        Unit::Bytes,
+        "Threshold: maximum total size of messages allowed on the producer queues"
+    );
+    gauge!(KAFKA_MSG_SIZE_MAX).set(0);
+
+    describe_gauge!(
+        KAFKA_TX,
+        Unit::Count,
+        "Total number of requests sent to Kafka brokers"
+    );
+    gauge!(KAFKA_TX).set(0);
+
+    describe_gauge!(
+        KAFKA_TX_BYTES,
+        Unit::Bytes,
+        "Total number of bytes transmitted to Kafka brokers"
+    );
+    gauge!(KAFKA_TX_BYTES).set(0);
+
+    describe_gauge!(
+        KAFKA_RX,
+        Unit::Count,
+        "Total number of responses received from Kafka brokers"
+    );
+    gauge!(KAFKA_RX).set(0);
+
+    describe_gauge!(
+        KAFKA_RX_BYTES,
+        Unit::Bytes,
+        "Total number of bytes received from Kafka brokers"
+    );
+    gauge!(KAFKA_RX_BYTES).set(0);
+
+    describe_counter!(
+        KAFKA_FAILED_DELIVERIES,
+        Unit::Count,
+        "Number of deliveries to Kafka broker which failed"
+    );
+    counter!(KAFKA_FAILED_DELIVERIES).absolute(0);
 
     Ok(())
 }
