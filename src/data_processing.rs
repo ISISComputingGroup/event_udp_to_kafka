@@ -33,19 +33,20 @@ pub fn process_udp_bytes_to_kafka<F>(
 ) where
     F: FnMut(&[u8]),
 {
-    counter!(INCOMING_UDP_PACKETS).increment(1);
-    counter!(INCOMING_UDP_PACKET_SIZE).increment(udp_packet.len() as u64);
+    counter!(INCOMING_UDP_PACKETS, "ip" => src_ip.to_string()).increment(1);
+    counter!(INCOMING_UDP_PACKET_SIZE, "ip" => src_ip.to_string())
+        .increment(udp_packet.len() as u64);
 
     let frames = packet_to_frames(udp_packet);
 
     for frame in frames {
-        counter!(INCOMING_UDP_HEADERS).increment(1);
+        counter!(INCOMING_UDP_HEADERS, "ip" => src_ip.to_string()).increment(1);
 
         let result = process_neutron_frame(fbb, frame, src_ip, config, &mut sink);
 
         if let Err(e) = result {
             warn!("Error processing packet: {}", e);
-            counter!(PROCESSING_ERRORS).increment(1);
+            counter!(PROCESSING_ERRORS, "ip" => src_ip.to_string()).increment(1);
         }
     }
 }
