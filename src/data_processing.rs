@@ -1,16 +1,18 @@
 //! Utilities for converting UDP bytes to flatbuffers-encoded messages.
 
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use std::net::IpAddr;
 
 use crate::config::EventUdpToKafkaConfig;
 use crate::metrics::{
     INCOMING_UDP_HEADERS, INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_LONG,
     INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_SHORT, INCOMING_UDP_PACKET_SIZE,
-    INCOMING_UDP_PACKETS, NEUTRON_EVENTS, PROCESSING_ERRORS, STREAMING_CONTROL_BOARD_FRAMES,
+    INCOMING_UDP_PACKET_SIZE_BY_IP, INCOMING_UDP_PACKET_TOO_SHORT, INCOMING_UDP_PACKETS,
+    INCOMING_UDP_PACKETS_BY_IP, NEUTRON_EVENTS, PROCESSING_ERRORS, PROCESSING_ERRORS_BY_IP,
+    STREAMING_CONTROL_BOARD_FRAMES,
 };
 use crate::packet_formats::parse_board_data;
-use crate::udp_message::{InvalidMessageReason, UdpMessageView, UdpPacketType};
+use crate::udp_message::{InvalidMessageReason, UdpMessageView};
 use flatbuffers::FlatBufferBuilder;
 use isis_streaming_data_types::flatbuffers_generated::events_ev44::{
     Event44Message, Event44MessageArgs, finish_event_44_message_buffer,
@@ -35,28 +37,21 @@ pub fn process_udp_bytes_to_kafka<F>(
 {
     counter!(INCOMING_UDP_PACKETS).increment(1);
     counter!(INCOMING_UDP_PACKET_SIZE).increment(udp_packet.len() as u64);
+    counter!(INCOMING_UDP_PACKETS_BY_IP, "ip" => src_ip.to_string()).increment(1);
+    counter!(INCOMING_UDP_PACKET_SIZE_BY_IP, "ip" => src_ip.to_string())
+        .increment(udp_packet.len() as u64);
 
     let frames = packet_to_frames(udp_packet);
 
     for frame in frames {
-        let packet_type = frame.packet_type();
+        counter!(INCOMING_UDP_HEADERS).increment(1);
 
-        counter!(INCOMING_UDP_HEADERS, "type" => packet_type.as_prometheus_label()).increment(1);
-
-        let result = match packet_type {
-            UdpPacketType::NeutronData => {
-                process_neutron_frame(fbb, frame, src_ip, config, &mut sink)
-            }
-            _ => Err(anyhow!("unimplemented packet type")),
-        };
+        let result = process_neutron_frame(fbb, frame, src_ip, config, &mut sink);
 
         if let Err(e) = result {
-            warn!(
-                "Error processing {} packet: {}",
-                packet_type.as_prometheus_label(),
-                e
-            );
-            counter!(PROCESSING_ERRORS, "type" => packet_type.as_prometheus_label()).increment(1);
+            warn!("Error processing packet: {}", e);
+            counter!(PROCESSING_ERRORS).increment(1);
+            counter!(PROCESSING_ERRORS_BY_IP, "ip" => src_ip.to_string()).increment(1);
         }
     }
 }
@@ -79,8 +74,10 @@ fn packet_to_frames(udp: &[u8]) -> Vec<UdpMessageView<'_>> {
                 }
                 Err(InvalidMessageReason::ContentTooShort)
                 | Err(InvalidMessageReason::MissingHeaderMarker) => {
-                    // Likely trailing zero padding. This is not an *error*, but indicates
-                    // that there are no more messages in this UDP packet.
+                    if content.iter().any(|&e| e != 0) {
+                        warn!("Packet with non-zero-length data (shorter than length of a header)");
+                        counter!(INCOMING_UDP_PACKET_TOO_SHORT).increment(1);
+                    }
                     break;
                 }
                 Err(InvalidMessageReason::DeclaredLengthTooShort(length)) => {

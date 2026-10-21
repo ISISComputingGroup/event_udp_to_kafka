@@ -1,14 +1,14 @@
 //! Utilities for exposing Prometheus-compatible metrics
 
 use crate::config::EventUdpToKafkaConfig;
-use crate::udp_message::UdpPacketType;
-use metrics::{Unit, counter, describe_counter, describe_histogram};
+use metrics::{Unit, counter, describe_counter, describe_gauge, describe_histogram, gauge};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use std::net::SocketAddr;
-use strum::IntoEnumIterator;
 
 pub const INCOMING_UDP_PACKETS: &str = "udp2kafka_incoming_udp_packets";
+pub const INCOMING_UDP_PACKETS_BY_IP: &str = "udp2kafka_incoming_udp_packets_by_ip";
 pub const INCOMING_UDP_PACKET_SIZE: &str = "udp2kafka_incoming_udp_packet_size";
+pub const INCOMING_UDP_PACKET_SIZE_BY_IP: &str = "udp2kafka_incoming_udp_packet_size_by_ip";
 
 pub const INCOMING_UDP_HEADERS: &str = "udp2kafka_incoming_udp_headers";
 pub const INCOMING_UDP_PACKET_ERRORS: &str = "udp2kafka_incoming_udp_packet_errors";
@@ -17,8 +17,10 @@ pub const INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_SHORT: &str =
     "udp2kafka_incoming_udp_invalid_header_length_too_short";
 pub const INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_LONG: &str =
     "udp2kafka_incoming_udp_invalid_header_length_too_long";
+pub const INCOMING_UDP_PACKET_TOO_SHORT: &str = "udp2kafka_incoming_udp_packet_too_short";
 
 pub const PROCESSING_ERRORS: &str = "udp2kafka_processing_errors";
+pub const PROCESSING_ERRORS_BY_IP: &str = "udp2kafka_processing_errors_by_ip";
 pub const PROCESSING_TIME: &str = "udp2kafka_processing_time";
 
 pub const STREAMING_CONTROL_BOARD_FRAMES: &str = "udp2kafka_streaming_control_board_frames";
@@ -28,6 +30,17 @@ pub const INVALID_NEUTRON_EVENTS: &str = "udp2kafka_invalid_neutron_events";
 pub const OUTGOING_KAFKA_PRODUCE_ERRORS: &str = "udp2kafka_outgoing_kafka_production_errors";
 pub const OUTGOING_KAFKA_MESSAGES: &str = "udp2kafka_outgoing_kafka_messages";
 pub const OUTGOING_KAFKA_MESSAGE_SIZE: &str = "udp2kafka_outgoing_kafka_message_size";
+
+pub const KAFKA_REPLYQ: &str = "udp2kafka_kafka_replyq";
+pub const KAFKA_MSG_CNT: &str = "udp2kafka_kafka_msg_cnt";
+pub const KAFKA_MSG_MAX: &str = "udp2kafka_kafka_msg_max";
+pub const KAFKA_MSG_SIZE: &str = "udp2kafka_kafka_msg_size";
+pub const KAFKA_MSG_SIZE_MAX: &str = "udp2kafka_kafka_msg_size_max";
+pub const KAFKA_TX: &str = "udp2kafka_kafka_tx";
+pub const KAFKA_TX_BYTES: &str = "udp2kafka_kafka_tx_bytes";
+pub const KAFKA_RX: &str = "udp2kafka_kafka_rx";
+pub const KAFKA_RX_BYTES: &str = "udp2kafka_kafka_rx_bytes";
+pub const KAFKA_FAILED_DELIVERIES: &str = "udp2kafka_kafka_failed_deliveries";
 
 pub fn initialize_metrics(config: &EventUdpToKafkaConfig) -> Result<(), String> {
     let builder = PrometheusBuilder::new()
@@ -49,17 +62,25 @@ pub fn initialize_metrics(config: &EventUdpToKafkaConfig) -> Result<(), String> 
     counter!(INCOMING_UDP_PACKETS).absolute(0);
 
     describe_counter!(
+        INCOMING_UDP_PACKETS_BY_IP,
+        Unit::Count,
+        "Total UDP packets received from a specific IP address"
+    );
+
+    describe_counter!(
         INCOMING_UDP_PACKET_SIZE,
         Unit::Bytes,
         "Size of total UDP packets received"
     );
     counter!(INCOMING_UDP_PACKET_SIZE).absolute(0);
 
-    describe_counter!(INCOMING_UDP_HEADERS, Unit::Count, "Incoming UDP headers.");
+    describe_counter!(
+        INCOMING_UDP_PACKET_SIZE_BY_IP,
+        Unit::Bytes,
+        "Size of total UDP packets received from a specific IP address"
+    );
 
-    for typ in UdpPacketType::iter() {
-        counter!(INCOMING_UDP_HEADERS, "type" => typ.as_prometheus_label()).absolute(0);
-    }
+    describe_counter!(INCOMING_UDP_HEADERS, Unit::Count, "Incoming UDP headers.");
 
     describe_counter!(
         INCOMING_UDP_PACKET_ERRORS,
@@ -83,6 +104,13 @@ pub fn initialize_metrics(config: &EventUdpToKafkaConfig) -> Result<(), String> 
     counter!(INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_LONG).absolute(0);
 
     describe_counter!(
+        INCOMING_UDP_PACKET_TOO_SHORT,
+        Unit::Count,
+        "Number of UDP headers that contained non-zero data that was too short to be interpreted as a header"
+    );
+    counter!(INCOMING_UDP_PACKET_TOO_SHORT).absolute(0);
+
+    describe_counter!(
         STREAMING_CONTROL_BOARD_FRAMES,
         Unit::Count,
         "Number of frame headers received from streaming control board."
@@ -90,10 +118,13 @@ pub fn initialize_metrics(config: &EventUdpToKafkaConfig) -> Result<(), String> 
     counter!(STREAMING_CONTROL_BOARD_FRAMES).absolute(0);
 
     describe_counter!(PROCESSING_ERRORS, Unit::Count, "Message processing errors.");
+    counter!(PROCESSING_ERRORS).absolute(0);
 
-    for typ in UdpPacketType::iter() {
-        counter!(PROCESSING_ERRORS, "type" => typ.as_prometheus_label()).absolute(0);
-    }
+    describe_counter!(
+        PROCESSING_ERRORS_BY_IP,
+        Unit::Count,
+        "Message processing errors from a specific IP address."
+    );
 
     describe_histogram!(
         PROCESSING_TIME,
@@ -131,6 +162,69 @@ pub fn initialize_metrics(config: &EventUdpToKafkaConfig) -> Result<(), String> 
         "Size of messages successfully enqueued for sending to Kafka"
     );
     counter!(OUTGOING_KAFKA_MESSAGE_SIZE).absolute(0);
+
+    describe_gauge!(
+        KAFKA_REPLYQ,
+        Unit::Count,
+        "Number of ops (callbacks, events, etc) waiting in queue for application to serve with rd_kafka_poll()"
+    );
+    gauge!(KAFKA_REPLYQ).set(0);
+
+    describe_gauge!(
+        KAFKA_MSG_CNT,
+        Unit::Count,
+        "Current number of messages in producer queues"
+    );
+    gauge!(KAFKA_MSG_CNT).set(0);
+
+    describe_gauge!(
+        KAFKA_MSG_MAX,
+        Unit::Count,
+        "Threshold: maximum number of messages allowed allowed on the producer queues"
+    );
+    gauge!(KAFKA_MSG_MAX).set(0);
+
+    describe_gauge!(
+        KAFKA_MSG_SIZE_MAX,
+        Unit::Bytes,
+        "Threshold: maximum total size of messages allowed on the producer queues"
+    );
+    gauge!(KAFKA_MSG_SIZE_MAX).set(0);
+
+    describe_counter!(
+        KAFKA_TX,
+        Unit::Count,
+        "Total number of requests sent to Kafka brokers"
+    );
+    counter!(KAFKA_TX).absolute(0);
+
+    describe_counter!(
+        KAFKA_TX_BYTES,
+        Unit::Bytes,
+        "Total number of bytes transmitted to Kafka brokers"
+    );
+    counter!(KAFKA_TX_BYTES).absolute(0);
+
+    describe_counter!(
+        KAFKA_RX,
+        Unit::Count,
+        "Total number of responses received from Kafka brokers"
+    );
+    counter!(KAFKA_RX).absolute(0);
+
+    describe_counter!(
+        KAFKA_RX_BYTES,
+        Unit::Bytes,
+        "Total number of bytes received from Kafka brokers"
+    );
+    counter!(KAFKA_RX_BYTES).absolute(0);
+
+    describe_counter!(
+        KAFKA_FAILED_DELIVERIES,
+        Unit::Count,
+        "Number of deliveries to Kafka broker which failed"
+    );
+    counter!(KAFKA_FAILED_DELIVERIES).absolute(0);
 
     Ok(())
 }
