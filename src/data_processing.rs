@@ -7,8 +7,9 @@ use crate::config::EventUdpToKafkaConfig;
 use crate::metrics::{
     INCOMING_UDP_HEADERS, INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_LONG,
     INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_SHORT, INCOMING_UDP_PACKET_SIZE,
-    INCOMING_UDP_PACKET_SIZE_BY_IP, INCOMING_UDP_PACKETS, INCOMING_UDP_PACKETS_BY_IP,
-    NEUTRON_EVENTS, PROCESSING_ERRORS, PROCESSING_ERRORS_BY_IP, STREAMING_CONTROL_BOARD_FRAMES,
+    INCOMING_UDP_PACKET_SIZE_BY_IP, INCOMING_UDP_PACKET_TOO_SHORT, INCOMING_UDP_PACKETS,
+    INCOMING_UDP_PACKETS_BY_IP, NEUTRON_EVENTS, PROCESSING_ERRORS, PROCESSING_ERRORS_BY_IP,
+    STREAMING_CONTROL_BOARD_FRAMES,
 };
 use crate::packet_formats::parse_board_data;
 use crate::udp_message::{InvalidMessageReason, UdpMessageView};
@@ -73,8 +74,10 @@ fn packet_to_frames(udp: &[u8]) -> Vec<UdpMessageView<'_>> {
                 }
                 Err(InvalidMessageReason::ContentTooShort)
                 | Err(InvalidMessageReason::MissingHeaderMarker) => {
-                    // Likely trailing zero padding. This is not an *error*, but indicates
-                    // that there are no more messages in this UDP packet.
+                    if content.iter().any(|&e| e != 0) {
+                        warn!("Packet with non-zero-length data (shorter than length of a header)");
+                        counter!(INCOMING_UDP_PACKET_TOO_SHORT).increment(1);
+                    }
                     break;
                 }
                 Err(InvalidMessageReason::DeclaredLengthTooShort(length)) => {

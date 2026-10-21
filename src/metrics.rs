@@ -17,6 +17,7 @@ pub const INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_SHORT: &str =
     "udp2kafka_incoming_udp_invalid_header_length_too_short";
 pub const INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_LONG: &str =
     "udp2kafka_incoming_udp_invalid_header_length_too_long";
+pub const INCOMING_UDP_PACKET_TOO_SHORT: &str = "udp2kafka_incoming_udp_packet_too_short";
 
 pub const PROCESSING_ERRORS: &str = "udp2kafka_processing_errors";
 pub const PROCESSING_ERRORS_BY_IP: &str = "udp2kafka_processing_errors_by_ip";
@@ -101,6 +102,13 @@ pub fn initialize_metrics(config: &EventUdpToKafkaConfig) -> Result<(), String> 
         "Number of UDP headers that contained an length declaration longer than the remaining content"
     );
     counter!(INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_LONG).absolute(0);
+
+    describe_counter!(
+        INCOMING_UDP_PACKET_TOO_SHORT,
+        Unit::Count,
+        "Number of UDP headers that contained non-zero data that was too short to be interpreted as a header"
+    );
+    counter!(INCOMING_UDP_PACKET_TOO_SHORT).absolute(0);
 
     describe_counter!(
         STREAMING_CONTROL_BOARD_FRAMES,
