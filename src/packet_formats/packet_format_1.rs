@@ -14,7 +14,11 @@ impl PacketFormat for PacketFormat1 {
     const PACKET_FORMAT_CODE: u16 = 1;
 
     /// Decode board-specific parameters + data into events
-    fn parse_raw_data(board_specific_parameters: &[u8], data: &[u8]) -> anyhow::Result<EventData> {
+    fn parse_raw_data(
+        board_specific_parameters: &[u8],
+        data: &[u8],
+        frame_sync_delay_us: u32,
+    ) -> anyhow::Result<EventData> {
         const CLOCK_TICKS_TO_NS: u32 = 20;
 
         if !data.len().is_multiple_of(8) {
@@ -39,6 +43,8 @@ impl PacketFormat for PacketFormat1 {
         // an event.
         let mut invalid_events = 0;
 
+        let frame_sync_delay_ns = frame_sync_delay_us * 1000;
+
         let (time_of_flight, pixel_id) = data
             .as_chunks::<8>()
             .0
@@ -56,6 +62,16 @@ impl PacketFormat for PacketFormat1 {
 
                 let mut tof = tof_word & mask(25);
                 tof *= CLOCK_TICKS_TO_NS;
+
+                // Make TOF relative to the *original* frame sync time, rather than the
+                // "delayed" frame sync time.
+                // We need to add, to each event, the frame sync delay. We correspondingly
+                // subtract the frame sync delay from the reference time elsewhere, so that
+                // the emitted pu00/ev44 schemas contain:
+                // - Reference time = original pulse time
+                // - event_timestamp = time difference between the original pulse time and
+                //   the time of arrival of the neutron at the detector
+                tof += frame_sync_delay_ns;
 
                 // If we were told channel_bits = 0, we'll get None, which we want to treat as
                 // being channel 0 (since that is then the only possible channel)
@@ -127,7 +143,7 @@ mod tests {
         let data = PacketFormat1::make_fake_event();
         let board_specific_header_data = PacketFormat1::make_fake_board_specific_header_data();
 
-        let events = PacketFormat1::parse_raw_data(&board_specific_header_data, &data)
+        let events = PacketFormat1::parse_raw_data(&board_specific_header_data, &data, 0)
             .expect("parsing should work");
 
         assert_eq!(events.time_of_flight(), [PacketFormat1::FAKE_EVENT_TOF]);
@@ -139,7 +155,7 @@ mod tests {
         let data = [];
         let board_specific_header_data = PacketFormat1::make_fake_board_specific_header_data();
 
-        let events = PacketFormat1::parse_raw_data(&board_specific_header_data, &data)
+        let events = PacketFormat1::parse_raw_data(&board_specific_header_data, &data, 0)
             .expect("parsing should work");
 
         assert!(events.is_empty())
@@ -150,7 +166,7 @@ mod tests {
         let data = vec![0; 9]; // invalid length: 9 bytes
         let board_specific_header_data = PacketFormat1::make_fake_board_specific_header_data();
 
-        let events = PacketFormat1::parse_raw_data(&board_specific_header_data, &data);
+        let events = PacketFormat1::parse_raw_data(&board_specific_header_data, &data, 0);
 
         assert!(events.is_err_and(|e| {
             e.to_string()
