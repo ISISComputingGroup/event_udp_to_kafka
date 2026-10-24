@@ -119,16 +119,15 @@ fn process_neutron_frame<F>(
 where
     F: FnMut(&[u8]),
 {
-    let nanoseconds_since_epoch =
-        message
-            .gps_time()
-            .nanoseconds_since_epoch()
-            .with_context(|| {
-                format!(
-                    "Invalid frame header; timestamp {:?} is invalid",
-                    message.gps_time()
-                )
-            })?;
+    let frame_sync_time_with_delay_ns_since_epoch = message
+        .gps_time()
+        .nanoseconds_since_epoch()
+        .with_context(|| {
+            format!(
+                "Invalid frame header; timestamp {:?} is invalid",
+                message.gps_time()
+            )
+        })?;
 
     let is_streaming_control_board = src_ip == &config.streaming_control_board_ip;
 
@@ -152,11 +151,15 @@ where
         )
     }
 
+    let frame_sync_delay_us = message.frame_sync_delay_us();
+    let frame_sync_time_ns_since_epoch =
+        frame_sync_time_with_delay_ns_since_epoch - (frame_sync_delay_us as u64 * 1000);
+
     send_pu00(
         fbb,
         "event_udp_to_kafka",
         0,
-        nanoseconds_since_epoch,
+        frame_sync_time_ns_since_epoch,
         Some(message.vetoes()),
         is_streaming_control_board.then_some(message.period_number().into()),
         is_streaming_control_board.then_some(message.ppp_per_frame(config)),
@@ -167,6 +170,7 @@ where
         message.packet_format_code(),
         message.board_specific_parameters(),
         message.data_bytes(),
+        frame_sync_delay_us,
     )?;
 
     if !events.is_empty() {
@@ -176,7 +180,7 @@ where
             fbb,
             "event_udp_to_kafka",
             0,
-            nanoseconds_since_epoch,
+            frame_sync_time_ns_since_epoch,
             events.time_of_flight(),
             events.pixel_id(),
             &mut sink,

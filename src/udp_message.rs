@@ -211,6 +211,14 @@ impl<'a> UdpMessageView<'a> {
     pub fn data_bytes(&self) -> &[u8] {
         &self.content[self.header_length_bytes()..self.total_length_bytes()]
     }
+
+    /// The delay between the original timing pulse (from ISIS or a chopper)
+    /// and the start of the acquisition frame.
+    ///
+    /// This is in units of μs.
+    pub fn frame_sync_delay_us(&self) -> u32 {
+        u32::from_be_bytes(self.header_word(12))
+    }
 }
 
 /// Types of packets we may receive over UDP.
