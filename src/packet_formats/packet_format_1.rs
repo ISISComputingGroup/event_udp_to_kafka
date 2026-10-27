@@ -14,7 +14,11 @@ impl PacketFormat for PacketFormat1 {
     const PACKET_FORMAT_CODE: u16 = 1;
 
     /// Decode board-specific parameters + data into events
-    fn parse_raw_data(board_specific_parameters: &[u8], data: &[u8]) -> anyhow::Result<EventData> {
+    fn parse_raw_data(
+        board_specific_parameters: &[u8],
+        data: &[u8],
+        frame_sync_delay_us: u32,
+    ) -> anyhow::Result<EventData> {
         const CLOCK_TICKS_TO_NS: u32 = 20;
 
         if !data.len().is_multiple_of(8) {
@@ -39,6 +43,10 @@ impl PacketFormat for PacketFormat1 {
         // an event.
         let mut invalid_events = 0;
 
+        let frame_sync_delay_ns = frame_sync_delay_us.checked_mul(1000).ok_or_else(|| {
+            anyhow::anyhow!("frame_sync_delay is invalid; outside u32 nanoseconds range")
+        })?;
+
         let (time_of_flight, pixel_id) = data
             .as_chunks::<8>()
             .0
@@ -56,6 +64,11 @@ impl PacketFormat for PacketFormat1 {
 
                 let mut tof = tof_word & mask(25);
                 tof *= CLOCK_TICKS_TO_NS;
+
+                // Make TOF relative to the *original* frame sync time, rather than the
+                // "delayed" frame sync time. We need to add, to each event, the frame
+                // sync delay.
+                tof += frame_sync_delay_ns;
 
                 // If we were told channel_bits = 0, we'll get None, which we want to treat as
                 // being channel 0 (since that is then the only possible channel)
@@ -127,7 +140,7 @@ mod tests {
         let data = PacketFormat1::make_fake_event();
         let board_specific_header_data = PacketFormat1::make_fake_board_specific_header_data();
 
-        let events = PacketFormat1::parse_raw_data(&board_specific_header_data, &data)
+        let events = PacketFormat1::parse_raw_data(&board_specific_header_data, &data, 0)
             .expect("parsing should work");
 
         assert_eq!(events.time_of_flight(), [PacketFormat1::FAKE_EVENT_TOF]);
@@ -135,11 +148,58 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_event_with_frame_sync_delay() {
+        let data = PacketFormat1::make_fake_event();
+        let frame_sync_delay_us = 1000;
+
+        let board_specific_header_data = PacketFormat1::make_fake_board_specific_header_data();
+
+        let events =
+            PacketFormat1::parse_raw_data(&board_specific_header_data, &data, frame_sync_delay_us)
+                .expect("parsing should work");
+
+        assert_eq!(
+            events.time_of_flight(),
+            [PacketFormat1::FAKE_EVENT_TOF + (1000 * frame_sync_delay_us as i32)]
+        );
+        assert_eq!(events.pixel_id(), [PacketFormat1::FAKE_EVENT_PIXEL]);
+    }
+
+    #[test]
+    fn test_parse_event_with_long_frame_sync_delay() {
+        let data = PacketFormat1::make_fake_event();
+        let frame_sync_delay_us = 2000000; // 2 seconds of frame sync delay
+
+        let board_specific_header_data = PacketFormat1::make_fake_board_specific_header_data();
+
+        let events =
+            PacketFormat1::parse_raw_data(&board_specific_header_data, &data, frame_sync_delay_us)
+                .expect("parsing should work");
+
+        assert_eq!(
+            events.time_of_flight(),
+            [PacketFormat1::FAKE_EVENT_TOF + (1000 * frame_sync_delay_us as i32)]
+        );
+        assert_eq!(events.pixel_id(), [PacketFormat1::FAKE_EVENT_PIXEL]);
+    }
+
+    #[test]
+    fn test_parse_event_with_too_long_frame_sync_delay() {
+        let data = PacketFormat1::make_fake_event();
+        let frame_sync_delay_us = 5000000; // 5 seconds of frame sync delay (outside 32-bit range)
+
+        let board_specific_header_data = PacketFormat1::make_fake_board_specific_header_data();
+
+        PacketFormat1::parse_raw_data(&board_specific_header_data, &data, frame_sync_delay_us)
+            .expect_err("should fail due to frame sync delay being too long");
+    }
+
+    #[test]
     fn test_parse_empty_events() {
         let data = [];
         let board_specific_header_data = PacketFormat1::make_fake_board_specific_header_data();
 
-        let events = PacketFormat1::parse_raw_data(&board_specific_header_data, &data)
+        let events = PacketFormat1::parse_raw_data(&board_specific_header_data, &data, 0)
             .expect("parsing should work");
 
         assert!(events.is_empty())
@@ -150,7 +210,7 @@ mod tests {
         let data = vec![0; 9]; // invalid length: 9 bytes
         let board_specific_header_data = PacketFormat1::make_fake_board_specific_header_data();
 
-        let events = PacketFormat1::parse_raw_data(&board_specific_header_data, &data);
+        let events = PacketFormat1::parse_raw_data(&board_specific_header_data, &data, 0);
 
         assert!(events.is_err_and(|e| {
             e.to_string()
