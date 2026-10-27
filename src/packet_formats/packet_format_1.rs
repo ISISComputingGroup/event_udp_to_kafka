@@ -43,7 +43,9 @@ impl PacketFormat for PacketFormat1 {
         // an event.
         let mut invalid_events = 0;
 
-        let frame_sync_delay_ns = frame_sync_delay_us * 1000;
+        let frame_sync_delay_ns = frame_sync_delay_us.checked_mul(1000).ok_or_else(|| {
+            anyhow::anyhow!("frame_sync_delay is invalid; outside u32 nanoseconds range")
+        })?;
 
         let (time_of_flight, pixel_id) = data
             .as_chunks::<8>()
@@ -143,6 +145,53 @@ mod tests {
 
         assert_eq!(events.time_of_flight(), [PacketFormat1::FAKE_EVENT_TOF]);
         assert_eq!(events.pixel_id(), [PacketFormat1::FAKE_EVENT_PIXEL]);
+    }
+
+    #[test]
+    fn test_parse_event_with_frame_sync_delay() {
+        let data = PacketFormat1::make_fake_event();
+        let frame_sync_delay_us = 1000;
+
+        let board_specific_header_data = PacketFormat1::make_fake_board_specific_header_data();
+
+        let events =
+            PacketFormat1::parse_raw_data(&board_specific_header_data, &data, frame_sync_delay_us)
+                .expect("parsing should work");
+
+        assert_eq!(
+            events.time_of_flight(),
+            [PacketFormat1::FAKE_EVENT_TOF + (1000 * frame_sync_delay_us as i32)]
+        );
+        assert_eq!(events.pixel_id(), [PacketFormat1::FAKE_EVENT_PIXEL]);
+    }
+
+    #[test]
+    fn test_parse_event_with_long_frame_sync_delay() {
+        let data = PacketFormat1::make_fake_event();
+        let frame_sync_delay_us = 2000000; // 2 seconds of frame sync delay
+
+        let board_specific_header_data = PacketFormat1::make_fake_board_specific_header_data();
+
+        let events =
+            PacketFormat1::parse_raw_data(&board_specific_header_data, &data, frame_sync_delay_us)
+                .expect("parsing should work");
+
+        assert_eq!(
+            events.time_of_flight(),
+            [PacketFormat1::FAKE_EVENT_TOF + (1000 * frame_sync_delay_us as i32)]
+        );
+        assert_eq!(events.pixel_id(), [PacketFormat1::FAKE_EVENT_PIXEL]);
+    }
+
+    #[test]
+    fn test_parse_event_with_too_long_frame_sync_delay() {
+        let data = PacketFormat1::make_fake_event();
+        let frame_sync_delay_us = 5000000; // 5 seconds of frame sync delay (outside 32-bit range)
+
+        let board_specific_header_data = PacketFormat1::make_fake_board_specific_header_data();
+
+        PacketFormat1::parse_raw_data(&board_specific_header_data, &data, frame_sync_delay_us)
+            .expect_err("should fail due to frame sync delay being too long");
     }
 
     #[test]
