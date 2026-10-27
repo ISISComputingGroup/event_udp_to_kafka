@@ -64,13 +64,8 @@ impl PacketFormat for PacketFormat1 {
                 tof *= CLOCK_TICKS_TO_NS;
 
                 // Make TOF relative to the *original* frame sync time, rather than the
-                // "delayed" frame sync time.
-                // We need to add, to each event, the frame sync delay. We correspondingly
-                // subtract the frame sync delay from the reference time elsewhere, so that
-                // the emitted pu00/ev44 schemas contain:
-                // - Reference time = original pulse time
-                // - event_timestamp = time difference between the original pulse time and
-                //   the time of arrival of the neutron at the detector
+                // "delayed" frame sync time. We need to add, to each event, the frame
+                // sync delay.
                 tof += frame_sync_delay_ns;
 
                 // If we were told channel_bits = 0, we'll get None, which we want to treat as

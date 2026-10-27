@@ -119,7 +119,7 @@ fn process_neutron_frame<F>(
 where
     F: FnMut(&[u8]),
 {
-    let frame_sync_time_with_delay_ns_since_epoch = message
+    let frame_sync_time_ns_since_epoch = message
         .gps_time()
         .nanoseconds_since_epoch()
         .with_context(|| {
@@ -151,10 +151,6 @@ where
         )
     }
 
-    let frame_sync_delay_us = message.frame_sync_delay_us();
-    let frame_sync_time_ns_since_epoch =
-        frame_sync_time_with_delay_ns_since_epoch - (frame_sync_delay_us as u64 * 1000);
-
     send_pu00(
         fbb,
         "event_udp_to_kafka",
@@ -170,7 +166,7 @@ where
         message.packet_format_code(),
         message.board_specific_parameters(),
         message.data_bytes(),
-        frame_sync_delay_us,
+        message.frame_sync_delay_us(),
     )?;
 
     if !events.is_empty() {
