@@ -42,6 +42,9 @@ pub const KAFKA_RX: &str = "udp2kafka_kafka_rx";
 pub const KAFKA_RX_BYTES: &str = "udp2kafka_kafka_rx_bytes";
 pub const KAFKA_FAILED_DELIVERIES: &str = "udp2kafka_kafka_failed_deliveries";
 
+pub const SYSTEM_GPS_CLOCK_DRIFT: &str = "udp2kafka_system_gps_clock_drift";
+pub const LARGE_CLOCK_DRIFT_MESSAGES: &str = "udp2kafka_large_clock_drift_messages";
+
 pub fn initialize_metrics(config: &EventUdpToKafkaConfig) -> Result<(), String> {
     let builder = PrometheusBuilder::new()
         .with_recommended_naming(true)
@@ -225,6 +228,20 @@ pub fn initialize_metrics(config: &EventUdpToKafkaConfig) -> Result<(), String> 
         "Number of deliveries to Kafka broker which failed"
     );
     counter!(KAFKA_FAILED_DELIVERIES).absolute(0);
+
+    describe_counter!(
+        LARGE_CLOCK_DRIFT_MESSAGES,
+        Unit::Count,
+        "Number of messages with a significant difference between GPS time and system time"
+    );
+    counter!(LARGE_CLOCK_DRIFT_MESSAGES).absolute(0);
+
+    describe_gauge!(
+        SYSTEM_GPS_CLOCK_DRIFT,
+        Unit::Nanoseconds,
+        "Most recent absolute difference between GPS time and system time"
+    );
+    gauge!(SYSTEM_GPS_CLOCK_DRIFT).set(0);
 
     Ok(())
 }

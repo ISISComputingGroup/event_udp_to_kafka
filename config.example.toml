@@ -14,6 +14,9 @@ metrics_bind_addr = "127.0.0.1:8484"
 # uAh per frame
 raw_to_uah_scaling = 1.738e-6
 
+# Allowed clock drift between GPS and system time before issuing warnings
+allowed_gps_system_clock_drift_ns = 10_000_000_000
+
 # IP of the streaming control board. This is the source-of-truth for
 # the protons-per-pulse information.
 streaming_control_board_ip = "192.168.1.1"

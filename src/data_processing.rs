@@ -1,18 +1,16 @@
 //! Utilities for converting UDP bytes to flatbuffers-encoded messages.
 
-use anyhow::Context;
-use std::net::IpAddr;
-
 use crate::config::EventUdpToKafkaConfig;
 use crate::metrics::{
     INCOMING_UDP_HEADERS, INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_LONG,
     INCOMING_UDP_INVALID_HEADER_DECLARED_LENGTH_TOO_SHORT, INCOMING_UDP_PACKET_SIZE,
     INCOMING_UDP_PACKET_SIZE_BY_IP, INCOMING_UDP_PACKET_TOO_SHORT, INCOMING_UDP_PACKETS,
     INCOMING_UDP_PACKETS_BY_IP, NEUTRON_EVENTS, PROCESSING_ERRORS, PROCESSING_ERRORS_BY_IP,
-    STREAMING_CONTROL_BOARD_FRAMES,
+    STREAMING_CONTROL_BOARD_FRAMES, SYSTEM_GPS_CLOCK_DRIFT,
 };
 use crate::packet_formats::parse_board_data;
 use crate::udp_message::{InvalidMessageReason, UdpMessageView};
+use anyhow::Context;
 use flatbuffers::FlatBufferBuilder;
 use isis_streaming_data_types::flatbuffers_generated::events_ev44::{
     Event44Message, Event44MessageArgs, finish_event_44_message_buffer,
@@ -21,7 +19,9 @@ use isis_streaming_data_types::flatbuffers_generated::pulse_metadata_pu00::{
     Pu00Message, Pu00MessageArgs, finish_pu_00_message_buffer,
 };
 use log::{debug, warn};
-use metrics::counter;
+use metrics::{counter, gauge};
+use std::net::IpAddr;
+use std::time::SystemTime;
 
 /// Process a byte-slice of UDP data to the corresponding flatbuffers messages.
 ///
@@ -127,6 +127,18 @@ where
                 )
             })?;
 
+    let system_time_now_ns: u64 = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)?
+        .as_nanos()
+        .try_into()?;
+    let time_diff_ns = system_time_now_ns.abs_diff(nanoseconds_since_epoch);
+    if time_diff_ns > config.allowed_gps_system_clock_drift_ns {
+        warn!(
+            "GPS time very different from system time (GPS={nanoseconds_since_epoch} system={system_time_now_ns} diff={time_diff_ns} ns)"
+        );
+    }
+    gauge!(SYSTEM_GPS_CLOCK_DRIFT).set(time_diff_ns as f64);
+
     let is_streaming_control_board = src_ip == &config.streaming_control_board_ip;
 
     // The period number and PPP only ever come from the streaming control board packets.
@@ -141,13 +153,17 @@ where
     // module, when assembling a frame.
     if is_streaming_control_board {
         counter!(STREAMING_CONTROL_BOARD_FRAMES).increment(1);
-        debug!(
-            "Frame header from streaming control board (vetoes = {}, period = {}, ppp = {})",
-            message.vetoes(),
-            message.period_number(),
-            message.ppp_per_frame(config)
-        )
     }
+
+    debug!(
+        "Frame header (packet format = {}, board = {}, vetoes = {}, period = {}, ppp = {}, GPS time = {})",
+        message.packet_format_code(),
+        message.board_type(),
+        message.vetoes(),
+        message.period_number(),
+        message.ppp_per_frame(config),
+        nanoseconds_since_epoch,
+    );
 
     send_pu00(
         fbb,
