@@ -24,6 +24,10 @@ pub struct EventUdpToKafkaConfig {
     /// Example: `127.0.0.1:8484`
     pub metrics_bind_addr: String,
 
+    /// The allowable clock-drift between the system clock and the GPS
+    /// clock before triggering warnings.
+    pub allowed_gps_system_clock_drift_ns: u64,
+
     /// IP of the streaming control board.
     pub streaming_control_board_ip: IpAddr,
 
@@ -57,6 +61,7 @@ impl EventUdpToKafkaConfig {
             metrics_bind_addr: "127.0.0.1:2345".to_string(),
             streaming_control_board_ip: Ipv4Addr::new(127, 0, 0, 1).into(),
             kafka_producer: HashMap::new(),
+            allowed_gps_system_clock_drift_ns: 10_000_000_000,
         }
     }
 }

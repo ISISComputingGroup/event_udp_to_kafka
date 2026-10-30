@@ -18,7 +18,10 @@ impl PacketFormat for PacketFormat1 {
         const CLOCK_TICKS_TO_NS: u32 = 20;
 
         if !data.len().is_multiple_of(8) {
-            bail!("PacketFormat1 Event data is not a multiple of pairs of 4-byte words");
+            bail!(
+                "PacketFormat1 Event data is not a multiple of pairs of 4-byte words (length: {})",
+                data.len()
+            );
         }
         if board_specific_parameters.len() != 8 {
             bail!("PacketFormat1 board-specific parameters should have length 8");
