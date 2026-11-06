@@ -11,6 +11,7 @@ pub mod config;
 pub mod data_processing;
 pub mod event_data;
 pub mod gps_time;
+pub mod kafka_producer_metrics;
 pub mod metrics;
 pub mod packet_formats;
 pub mod testing;
@@ -20,16 +21,17 @@ use crate::data_processing::process_udp_bytes_to_kafka;
 
 use clap::Parser;
 use rdkafka::config::ClientConfig;
-use rdkafka::producer::{DefaultProducerContext, ThreadedProducer};
+use rdkafka::producer::ThreadedProducer;
 
 use crate::config::EventUdpToKafkaConfig;
+use crate::kafka_producer_metrics::MetricsProducerContext;
 use crate::metrics::{
     INCOMING_UDP_PACKET_ERRORS, OUTGOING_KAFKA_MESSAGE_SIZE, OUTGOING_KAFKA_MESSAGES,
     OUTGOING_KAFKA_PRODUCE_ERRORS, PROCESSING_TIME,
 };
 use ::metrics::{counter, histogram};
 use flatbuffers::FlatBufferBuilder;
-use log::{debug, error};
+use log::{debug, error, trace};
 use std::net::UdpSocket;
 use std::time::Instant;
 
@@ -45,7 +47,7 @@ pub struct Args {
     pub verbosity: clap_verbosity_flag::Verbosity,
 }
 
-fn make_producer(config: &EventUdpToKafkaConfig) -> ThreadedProducer<DefaultProducerContext> {
+fn make_producer(config: &EventUdpToKafkaConfig) -> ThreadedProducer<MetricsProducerContext> {
     let mut kafka_producer_config = ClientConfig::new();
 
     config.kafka_producer.iter().for_each(|(k, v)| {
@@ -53,7 +55,7 @@ fn make_producer(config: &EventUdpToKafkaConfig) -> ThreadedProducer<DefaultProd
     });
 
     kafka_producer_config
-        .create()
+        .create_with_context(MetricsProducerContext {})
         .expect("Producer creation error")
 }
 
@@ -73,6 +75,8 @@ pub fn udp_process(config: &EventUdpToKafkaConfig) -> ! {
         if let Ok((number_of_bytes, src_sock_addr)) = read_result {
             let now = Instant::now();
             let src_ip = src_sock_addr.ip();
+
+            trace!("raw data: {:?}", &udp_buf[..number_of_bytes]);
 
             process_udp_bytes_to_kafka(
                 &mut fbb,
@@ -98,8 +102,9 @@ pub fn udp_process(config: &EventUdpToKafkaConfig) -> ! {
 
             let elapsed = now.elapsed();
             debug!(
-                "Packet IP: {} - Processing time: {:.3}us",
+                "Packet IP: {} - {} bytes - Processing time: {:.3}us",
                 src_ip,
+                number_of_bytes,
                 elapsed.as_micros()
             );
             histogram!(PROCESSING_TIME).record(elapsed.as_secs_f64());
