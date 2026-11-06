@@ -1,7 +1,10 @@
 //! # `event_udp_to_kafka`
 //!
-//! This module listens to UDP data received on a socket, converts this to flatbuffers-encoded
-//! messages, and produces these messages to a Kafka topic (usually `_rawEvents`).
+//! This module:
+//! - Listens to UDP data received on a socket
+//! - Validates received data
+//! - Converts event timestamps on a hardware clock to time-of-flight since the neutron pulse.
+//! - Emits flatbuffers-encoded messages, onto a Kafka topic (usually `_rawEvents`).
 
 pub mod bit_utils;
 pub mod config;

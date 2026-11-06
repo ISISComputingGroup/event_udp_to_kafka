@@ -21,7 +21,11 @@ pub trait PacketFormat {
     /// - ``data``: the raw UDP data to be parsed. Excludes all header bytes. May be empty.
     /// - ``wiring_config``: slice of ``WiringConfigRecord``s which correspond to the source IP
     ///   of this packet. This may contain multiple entries.
-    fn parse_raw_data(board_specific_parameters: &[u8], data: &[u8]) -> anyhow::Result<EventData>;
+    fn parse_raw_data(
+        board_specific_parameters: &[u8],
+        data: &[u8],
+        frame_sync_delay_us: u32,
+    ) -> anyhow::Result<EventData>;
 }
 
 /// Testing utilities for a packet format. These may be used by unit tests and benchmarks,
@@ -50,13 +54,14 @@ pub fn parse_board_data(
     packet_format_code: u16,
     board_specific_parameters: &[u8],
     data: &[u8],
+    frame_sync_delay_us: u32,
 ) -> anyhow::Result<EventData> {
     if data.is_empty() {
         return Ok(EventData::default());
     }
     match packet_format_code {
         PacketFormat1::PACKET_FORMAT_CODE => {
-            PacketFormat1::parse_raw_data(board_specific_parameters, data)
+            PacketFormat1::parse_raw_data(board_specific_parameters, data, frame_sync_delay_us)
         }
         unknown => Err(anyhow!("unknown packet format code {}", unknown)),
     }
@@ -69,11 +74,11 @@ mod tests {
     #[test]
     fn test_parse_board_data() {
         // empty data -> empty event list regardless of board type
-        assert!(parse_board_data(0, &[], &[]).is_ok());
+        assert!(parse_board_data(0, &[], &[], 0).is_ok());
 
         // If a board type is provided but we don't have a handler for it, should get an error
         assert!(
-            parse_board_data(0, &[], &[0; 8])
+            parse_board_data(0, &[], &[0; 8], 0)
                 .is_err_and(|e| e.to_string().contains("unknown packet format code"))
         );
     }
