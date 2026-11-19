@@ -130,10 +130,10 @@ where
         .duration_since(SystemTime::UNIX_EPOCH)?
         .as_nanos()
         .try_into()?;
-    let time_diff_ns = system_time_now_ns.abs_diff(nanoseconds_since_epoch);
+    let time_diff_ns = system_time_now_ns.abs_diff(frame_sync_time_ns_since_epoch);
     if time_diff_ns > config.allowed_gps_system_clock_drift_ns {
         warn!(
-            "GPS time very different from system time (GPS={nanoseconds_since_epoch} system={system_time_now_ns} diff={time_diff_ns} ns)"
+            "GPS time very different from system time (GPS={frame_sync_time_ns_since_epoch} system={system_time_now_ns} diff={time_diff_ns} ns)"
         );
     }
     gauge!(SYSTEM_GPS_CLOCK_DRIFT).set(time_diff_ns as f64);
@@ -161,7 +161,7 @@ where
         message.vetoes(),
         message.period_number(),
         message.ppp_per_frame(config),
-        nanoseconds_since_epoch,
+        frame_sync_time_ns_since_epoch,
     );
 
     send_pu00(
