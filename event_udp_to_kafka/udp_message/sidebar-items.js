@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["HEADER_MARKER","MINIMUM_HEADER_LEN_BYTES","MINIMUM_HEADER_LEN_WORDS","WORD_SIZE"],"enum":["InvalidMessageReason"],"struct":["UdpMessageView"]};
